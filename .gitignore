@@ -1,0 +1,8 @@
+*.gz
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.egg
+*.egg-info  
