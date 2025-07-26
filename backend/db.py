@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     Text,
     JSON,
+    Integer,
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -152,6 +153,19 @@ class AuditLogModel(Base):
     result: bool = Column(Boolean, nullable=False)
     message: str = Column(Text, nullable=True)
     timestamp: datetime = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class CasbinRule(Base):
+    __tablename__ = "casbin_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ptype = Column(String(255))
+    v0 = Column(String(255))
+    v1 = Column(String(255))
+    v2 = Column(String(255))
+    v3 = Column(String(255))
+    v4 = Column(String(255))
+    v5 = Column(String(255))
+
 
 
 def get_engine(settings: Settings):

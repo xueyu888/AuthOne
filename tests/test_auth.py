@@ -14,7 +14,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from authone import AuthService, AccessCheckRequest, Settings
+    from backend import AuthService, AccessCheckRequest, Settings
 except Exception:
     AuthService = None  # type: ignore[assignment]
     AccessCheckRequest = None  # type: ignore[assignment]
