@@ -1,13 +1,11 @@
 import axios from "axios"
 
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || "http://199.199.199.8:8000",
   headers: {
     "Content-Type": "application/json",
   },
 })
-
-// Based on backend/models.py and backend/schemas.py
 
 export interface Permission {
   id: string
@@ -19,48 +17,140 @@ export interface Role {
   id: string
   tenant_id: string
   name: string
-  description: string
-  permissions: string[] // Array of permission IDs
-}
-
-export interface RolePydantic {
-  id: string
-  tenant_id: string
-  name: string
-  description: string
-  permission_ids: string[]
-}
-
-export interface RoleCreate {
-  name: string
   description?: string
-  tenant_id: string
+  permissions: string[]
 }
 
 export interface Account {
-  // Define Account interface based on your backend model
+  id: string
+  username: string
+  email: string
+  tenant_id: string
+  roles: string[]
+  groups: string[]
 }
 
 export interface Group {
-  // Define Group interface based on your backend model
+  id: string
+  name: string
+  tenant_id: string
+  roles: string[]
 }
 
-// --- API Functions ---
+export interface Resource {
+  id: string
+  name: string
+  type: string
+  tenant_id: string
+  owner_id?: string
+}
+
+export interface AccessCheckRequest {
+  account_id: string
+  resource: string
+  action: string
+  tenant_id?: string
+}
+
+export interface AccessCheckResponse {
+  allowed: boolean
+  reason?: string
+}
+
+// Permission APIs
+export const getPermissions = async (tenantId?: string): Promise<Permission[]> => {
+  const params = tenantId ? { tenant_id: tenantId } : {}
+  const response = await apiClient.get("/permissions", { params })
+  return response.data
+}
+
+export const createPermission = async (name: string, description?: string): Promise<Permission> => {
+  const response = await apiClient.post("/permissions", null, {
+    params: { name, description: description || "" }
+  })
+  return response.data
+}
 
 // Role APIs
-export const getRoles = async (tenantId: string): Promise<RolePydantic[]> => {
-  const response = await apiClient.get(`/tenants/${tenantId}/roles`)
+export const getRoles = async (tenantId?: string): Promise<Role[]> => {
+  const params = tenantId ? { tenant_id: tenantId } : {}
+  const response = await apiClient.get("/roles", { params })
   return response.data
 }
 
-export const createRole = async (roleData: RoleCreate): Promise<RolePydantic> => {
-  const response = await apiClient.post(`/tenants/${roleData.tenant_id}/roles`, roleData)
+export const createRole = async (name: string, tenantId?: string, description?: string): Promise<Role> => {
+  const response = await apiClient.post("/roles", null, {
+    params: { name, tenant_id: tenantId, description: description || "" }
+  })
   return response.data
 }
 
-// TODO: Add other API functions
-// - getRole(id)
-// - updateRole(id, data)
-// - deleteRole(id)
-// - assignPermissionToRole(roleId, permissionId)
-// - and similar functions for Accounts, Groups, Permissions etc.
+// Account APIs
+export const getAccounts = async (tenantId?: string): Promise<Account[]> => {
+  const params = tenantId ? { tenant_id: tenantId } : {}
+  const response = await apiClient.get("/accounts", { params })
+  return response.data
+}
+
+export const createAccount = async (username: string, email: string, tenantId?: string): Promise<Account> => {
+  const response = await apiClient.post("/accounts", null, {
+    params: { username, email, tenant_id: tenantId }
+  })
+  return response.data
+}
+
+// Group APIs
+export const getGroups = async (tenantId?: string): Promise<Group[]> => {
+  const params = tenantId ? { tenant_id: tenantId } : {}
+  const response = await apiClient.get("/groups", { params })
+  return response.data
+}
+
+export const createGroup = async (name: string, tenantId?: string, description?: string): Promise<Group> => {
+  const response = await apiClient.post("/groups", null, {
+    params: { name, tenant_id: tenantId, description: description || "" }
+  })
+  return response.data
+}
+
+// Resource APIs
+export const getResources = async (tenantId?: string): Promise<Resource[]> => {
+  const params = tenantId ? { tenant_id: tenantId } : {}
+  const response = await apiClient.get("/resources", { params })
+  return response.data
+}
+
+export const createResource = async (
+  resourceType: string, 
+  name: string, 
+  tenantId?: string, 
+  ownerId?: string
+): Promise<Resource> => {
+  const response = await apiClient.post("/resources", null, {
+    params: { resource_type: resourceType, name, tenant_id: tenantId, owner_id: ownerId }
+  })
+  return response.data
+}
+
+// Assignment APIs
+export const assignPermissionToRole = async (roleId: string, permissionId: string): Promise<void> => {
+  await apiClient.post(`/roles/${roleId}/permissions/${permissionId}`)
+}
+
+export const assignRoleToAccount = async (accountId: string, roleId: string): Promise<void> => {
+  await apiClient.post(`/accounts/${accountId}/roles/${roleId}`)
+}
+
+export const assignRoleToGroup = async (groupId: string, roleId: string): Promise<void> => {
+  await apiClient.post(`/groups/${groupId}/roles/${roleId}`)
+}
+
+export const assignGroupToAccount = async (accountId: string, groupId: string): Promise<void> => {
+  await apiClient.post(`/accounts/${accountId}/groups/${groupId}`)
+}
+
+// Access Check API
+export const checkAccess = async (request: AccessCheckRequest): Promise<AccessCheckResponse> => {
+  const response = await apiClient.post("/access/check", request)
+  return response.data
+}
