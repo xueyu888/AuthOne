@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Optional
 
@@ -141,7 +140,7 @@ class ResourceModel(Base):
     name: str = Column(String(255), nullable=False)
     tenant_id: Optional[str] = Column(UUID(as_uuid=True), nullable=True)
     owner_id: Optional[str] = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
-    metadata: dict = Column(JSON, nullable=True)
+    meta_info: dict = Column(JSON, nullable=True)
 
 
 class AuditLogModel(Base):

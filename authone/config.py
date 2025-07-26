@@ -29,7 +29,7 @@ class Settings:
     :param casbin_policy_table: Casbin 策略表名称，在数据库中存储策略行。
     """
 
-    db_url: str = "postgresql://user:password@localhost:5432/authone"
+    db_url: str = "postgresql://postgres:123@localhost:5432/authone"
     log_level: str = "INFO"
     casbin_model_path: str = "rbac_model.conf"
     casbin_policy_table: str = "casbin_rules"

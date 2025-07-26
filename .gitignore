@@ -3,3 +3,7 @@ __pycache__
 *.pyo
 *.pyd  
 *.gz
+node_modules
+dist
+build
+.next

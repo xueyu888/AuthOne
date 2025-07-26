@@ -16,6 +16,7 @@ casbin = "^1.18"
 [tool.poetry.dev-dependencies]
 pytest = "^7.4"
 mypy = "^1.10"
+pyinstaller = "^6.4"
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]

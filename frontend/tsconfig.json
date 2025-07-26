@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES6",
+    "module": "ESNext",
+    "jsx": "preserve",
+    "strict": true,
+    "esModuleInterop": true,
+    "moduleResolution": "Node",
+    "allowJs": false,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "noEmit": true,
+    "incremental": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "pages",
+    "components",
+    "tests"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

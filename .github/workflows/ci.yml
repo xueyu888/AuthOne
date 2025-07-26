@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: authone_test
+          POSTGRES_USER: authone
+          POSTGRES_PASSWORD: authone
+        options: >-
+          --health-cmd="pg_isready -U authone"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install backend dependencies
+        run: |
+          poetry install --no-interaction
+
+      - name: Run backend tests
+        env:
+          DATABASE_URL: postgresql://authone:authone@localhost:5432/authone_test
+        run: |
+          poetry run pytest -q
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Run frontend tests
+        working-directory: ./frontend
+        run: npm test -- --ci --passWithNoTests
