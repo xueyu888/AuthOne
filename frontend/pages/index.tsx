@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Shield, Users, Key, UserCheck, Archive, TrendingUp, Activity } from 'lucide-react';
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://182.150.118.137:8000';
 
 interface Stats {
   accounts: number;
