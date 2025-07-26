@@ -140,7 +140,7 @@ class ResourceModel(Base):
     name: str = Column(String(255), nullable=False)
     tenant_id: Optional[str] = Column(UUID(as_uuid=True), nullable=True)
     owner_id: Optional[str] = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
-    meta_info: dict = Column(JSON, nullable=True)
+    resource_metadata: dict = Column(JSON, nullable=True)
 
 
 class AuditLogModel(Base):

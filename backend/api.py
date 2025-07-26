@@ -27,10 +27,33 @@ def create_permission(name: str, description: str = "") -> dict:
     return {"id": perm.id, "name": perm.name, "description": perm.description}
 
 
+@app.get("/permissions", response_model=list[dict])
+def list_permissions(tenant_id: str | None = None) -> list[dict]:
+    perms = _svc.list_permissions(tenant_id)
+    return [
+        {"id": p.id, "name": p.name, "description": p.description}
+        for p in perms
+    ]
+
+
 @app.post("/roles", response_model=dict)
 def create_role(name: str, tenant_id: str | None = None, description: str = "") -> dict:
     role = _svc.create_role(tenant_id, name, description)
     return {"id": role.id, "name": role.name, "tenant_id": role.tenant_id}
+
+
+@app.get("/roles", response_model=list[dict])
+def list_roles(tenant_id: str | None = None) -> list[dict]:
+    roles = _svc.list_roles(tenant_id)
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "tenant_id": r.tenant_id,
+            "permissions": r.permissions,
+        }
+        for r in roles
+    ]
 
 
 @app.post("/groups", response_model=dict)
@@ -39,10 +62,40 @@ def create_group(name: str, tenant_id: str | None = None, description: str = "")
     return {"id": group.id, "name": group.name, "tenant_id": group.tenant_id}
 
 
+@app.get("/groups", response_model=list[dict])
+def list_groups(tenant_id: str | None = None) -> list[dict]:
+    groups = _svc.list_groups(tenant_id)
+    return [
+        {
+            "id": g.id,
+            "name": g.name,
+            "tenant_id": g.tenant_id,
+            "roles": g.roles,
+        }
+        for g in groups
+    ]
+
+
 @app.post("/accounts", response_model=dict)
 def create_account(username: str, email: str, tenant_id: str | None = None) -> dict:
     acc = _svc.create_account(username, email, tenant_id)
     return {"id": acc.id, "username": acc.username, "tenant_id": acc.tenant_id}
+
+
+@app.get("/accounts", response_model=list[dict])
+def list_accounts(tenant_id: str | None = None) -> list[dict]:
+    accounts = _svc.list_accounts(tenant_id)
+    return [
+        {
+            "id": a.id,
+            "username": a.username,
+            "email": a.email,
+            "tenant_id": a.tenant_id,
+            "roles": a.roles,
+            "groups": a.groups,
+        }
+        for a in accounts
+    ]
 
 
 @app.post("/resources", response_model=dict)
@@ -54,6 +107,21 @@ def create_resource(
 ) -> dict:
     res = _svc.create_resource(resource_type, name, tenant_id, owner_id)
     return {"id": res.id, "name": res.name, "type": res.type, "tenant_id": res.tenant_id}
+
+
+@app.get("/resources", response_model=list[dict])
+def list_resources(tenant_id: str | None = None) -> list[dict]:
+    res = _svc.list_resources(tenant_id)
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "type": r.type,
+            "tenant_id": r.tenant_id,
+            "owner_id": r.owner_id,
+        }
+        for r in res
+    ]
 
 
 @app.post("/roles/{role_id}/permissions/{permission_id}")

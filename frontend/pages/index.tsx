@@ -14,11 +14,6 @@ export default function IndexPage() {
   const [permissionName, setPermissionName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
-  // 统一的错误处理函数
-  const handleError = (msg: string) => {
-    setMessage(msg);
-  };
-
   const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -28,7 +23,7 @@ export default function IndexPage() {
       setMessage(`角色 ${roleName} 已创建`);
       setRoleName('');
     } catch (error) {
-      handleError('创建角色失败');
+      setMessage('创建角色失败');
     }
   };
 
@@ -41,7 +36,7 @@ export default function IndexPage() {
       setMessage(`权限 ${permissionName} 已创建`);
       setPermissionName('');
     } catch (error) {
-      handleError('创建权限失败');
+      setMessage('创建权限失败');
     }
   };
 

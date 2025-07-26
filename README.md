@@ -69,7 +69,7 @@ poetry run python -c "from AuthOne.db import create_all; create_all()"
 
 ## 前端（Next.js）
 
-仓库包含一个基于 [Next.js](https://nextjs.org/) 的简单管理前端，位于 `frontend/` 目录，用于演示如何与后端接口交互。该前端提供表单用以创建角色和权限，可根据需要扩展为完整的控制台。
+仓库包含一个基于 [Next.js](https://nextjs.org/) 的完整管理前端，位于 `frontend/` 目录。前端界面提供了多个页面用于管理角色、权限、账户、用户组和资源，每个页面都可以创建实体、查看列表并完成常见的绑定操作（如角色绑定权限、账户绑定角色、用户组绑定角色等）。导航栏包含统一的 Logo 和链接，使得管理界面结构清晰、易用。
 
 ### 安装并运行前端
 
@@ -176,6 +176,24 @@ npm test
 1. **编码规范**：遵循指定的编码规范，禁止在服务层和模型层使用裸函数，除入口外所有逻辑均封装在类中；接口使用 `Protocol` 定义；`@dataclass` 与 `@classmethod` 用于数据模型和构造；私有属性以下划线开头；统一使用 snake_case 命名；显式声明 `__all__`。
 2. **静态类型检查**：建议在开发时使用 `mypy`（见 `pyproject.toml`）进行严格的类型检查，确保代码健壮。
 3. **数据库可替换**：虽然默认使用 PostgreSQL + SQLAlchemy，但仓库接口允许替换为其他数据库实现，只需实现相同的协议并在 `AuthService` 中注入。
+
+## 高并发支持
+
+AuthOne 设计上支持在生产环境中处理大量并发请求。服务基于 FastAPI 与 Uvicorn 运行，本身具有良好的异步性能。要达到 1 万并发级别，请参考以下建议：
+
+1. **多进程模型**：通过 Uvicorn 或 Gunicorn 启动多个 worker 进程，例如：
+
+   ```bash
+   poetry run uvicorn AuthOne.api:app --workers 4 --host 0.0.0.0 --port 8000
+   ```
+
+   每个进程可以利用多核 CPU，同时处理大量连接。
+
+2. **连接池**：确保 PostgreSQL 连接池大小足够大，可在 `Settings` 中调整 SQLAlchemy 引擎配置或使用外部连接池。
+
+3. **合理的限流与缓存**：对高频权限校验结果做缓存（如 Redis），减少数据库和 Casbin 访问；使用反向代理（如 Nginx）进行限流。
+
+4. **异步调用**：若在未来需要进一步提升性能，可将仓库层替换为支持异步的 SQLAlchemy 2.0 接口，并将接口定义为 `async def`。
 
 ## 持续集成
 

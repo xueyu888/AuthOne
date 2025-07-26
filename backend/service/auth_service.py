@@ -100,6 +100,22 @@ class AuthService:
         self._resource_repo.add(res)
         return res
 
+    # ------------------- 实体查询 -------------------
+    def list_permissions(self, tenant_id: Optional[str] = None) -> list[Permission]:
+        return self._perm_repo.list(tenant_id)
+
+    def list_roles(self, tenant_id: Optional[str] = None) -> list[Role]:
+        return self._role_repo.list(tenant_id)
+
+    def list_groups(self, tenant_id: Optional[str] = None) -> list[Group]:
+        return self._group_repo.list(tenant_id)
+
+    def list_accounts(self, tenant_id: Optional[str] = None) -> list[Account]:
+        return self._account_repo.list(tenant_id)
+
+    def list_resources(self, tenant_id: Optional[str] = None) -> list[Resource]:
+        return self._resource_repo.list(tenant_id)
+
     # ------------------- 关系绑定 -------------------
     def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
         self._role_repo.assign_permission(role_id, permission_id)

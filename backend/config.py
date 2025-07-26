@@ -31,7 +31,7 @@ class Settings:
 
     db_url: str = "postgresql://postgres:123@localhost:5432/authone"
     log_level: str = "INFO"
-    casbin_model_path: str = "rbac_model.conf"
+    casbin_model_path: str = "../rbac_model.conf"
     casbin_policy_table: str = "casbin_rules"
     # 未来可以添加更多配置项，如 Redis、缓存过期时间等
 
