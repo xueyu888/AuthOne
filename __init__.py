@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 from ._version import __version__
+# 从模型子包重新导入公开实体
 from .models import (
     Permission,
     Role,
     Group,
     Account,
+    Resource,
     AccessCheckRequest,
     AccessCheckResponse,
 )
@@ -25,6 +27,7 @@ __all__: list[str] = [
     "Role",
     "Group",
     "Account",
+    "Resource",
     "AccessCheckRequest",
     "AccessCheckResponse",
     "AuthService",

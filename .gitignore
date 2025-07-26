@@ -1,8 +1,4 @@
-*.gz
 __pycache__
-*.pyc
+*.py[cod]
 *.pyo
-*.pyd
-*.pkl
-*.egg
-*.egg-info  
+*.pyd  
