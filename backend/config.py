@@ -29,9 +29,13 @@ class Settings:
     :param casbin_policy_table: Casbin 策略表名称，在数据库中存储策略行。
     """
 
-    db_url: str = "postgresql://postgres:123@localhost:5432/authone"
+    # 默认异步数据库 URL。使用 asyncpg 作为 PostgreSQL 驱动。请根据实际
+    # 环境调整用户名、密码和数据库名。如果需要使用同步驱动，可在启动
+    # 时通过环境变量或其他方式覆盖此字段。
+    db_url_sync: str = "postgresql://postgres:123@localhost:5432/authone"
+    db_url: str = "postgresql+asyncpg://postgres:123@localhost:5432/authone"
     log_level: str = "INFO"
-    casbin_model_path: str = "../rbac_model.conf"
+    casbin_model_path: str = "rbac_model.conf"
     casbin_policy_table: str = "casbin_rules"
     # 未来可以添加更多配置项，如 Redis、缓存过期时间等
 

@@ -11,7 +11,8 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from ..models import Account, Group, Permission, Resource, Role
 from ..db import (
@@ -41,38 +42,45 @@ __all__ = [
 
 
 class _BaseRepo:
-    def __init__(self, session: Session) -> None:
+    """Base repository holding a SQLAlchemy async session.
+
+    All repositories should inherit from this base to share the ``_session``
+    attribute. The session is an instance of ``AsyncSession`` which must be
+    used with ``await`` to perform I/O operations.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
 
 class SQLAlchemyPermissionRepository(_BaseRepo, PermissionRepository):
-    def add(self, permission: Permission) -> None:
+    async def add(self, permission: Permission) -> None:
         model = PermissionModel(id=permission.id, name=permission.name, description=permission.description)
         self._session.add(model)
-        self._session.commit()
+        await self._session.commit()
 
-    def get(self, permission_id: str) -> Optional[Permission]:
-        obj = self._session.get(PermissionModel, permission_id)
+    async def get(self, permission_id: str) -> Optional[Permission]:
+        obj = await self._session.get(PermissionModel, permission_id)
         if not obj:
             return None
-        return Permission(_id=str(obj.id), _name=obj.name, _description=obj.description)
+        return Permission(_id=str(obj.id), _name=obj.name, _description=obj.description or "")
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Permission]:  # tenant_id ignored
-        objs = self._session.query(PermissionModel).all()
-        return [Permission(_id=str(o.id), _name=o.name, _description=o.description) for o in objs]
+    async def list(self, tenant_id: Optional[str] = None) -> List[Permission]:  # tenant_id ignored
+        result = await self._session.execute(select(PermissionModel))
+        objs = result.scalars().all()
+        return [Permission(_id=str(o.id), _name=o.name, _description=o.description or "") for o in objs]
 
 
 class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
-    def add(self, role: Role) -> None:
+    async def add(self, role: Role) -> None:
         model = RoleModel(id=role.id, tenant_id=role.tenant_id, name=role.name, description=role.description)
         self._session.add(model)
-        self._session.commit()
+        await self._session.commit()
 
-    def get(self, role_id: str) -> Optional[Role]:
-        obj: Optional[RoleModel] = self._session.get(RoleModel, role_id)
+    async def get(self, role_id: str) -> Optional[Role]:
+        obj: Optional[RoleModel] = await self._session.get(RoleModel, role_id)
         if not obj:
             return None
-        # collect permission ids
         perm_ids = [str(p.id) for p in obj.permissions]
         return Role(
             _id=str(obj.id),
@@ -82,12 +90,13 @@ class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
             _permissions=perm_ids,
         )
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Role]:
-        q = self._session.query(RoleModel)
+    async def list(self, tenant_id: Optional[str] = None) -> List[Role]:
+        stmt = select(RoleModel)
         if tenant_id is not None:
-            q = q.filter(RoleModel.tenant_id == tenant_id)
+            stmt = stmt.where(RoleModel.tenant_id == tenant_id)
+        result = await self._session.execute(stmt)
         roles: List[Role] = []
-        for obj in q:
+        for obj in result.scalars().all():
             perm_ids = [str(p.id) for p in obj.permissions]
             roles.append(
                 Role(
@@ -100,26 +109,26 @@ class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
             )
         return roles
 
-    def assign_permission(self, role_id: str, permission_id: str) -> None:
-        role_obj: RoleModel = self._session.get(RoleModel, role_id)  # type: ignore[assignment]
-        perm_obj: PermissionModel = self._session.get(PermissionModel, permission_id)  # type: ignore[assignment]
+    async def assign_permission(self, role_id: str, permission_id: str) -> None:
+        role_obj: RoleModel | None = await self._session.get(RoleModel, role_id)  # type: ignore[assignment]
+        perm_obj: PermissionModel | None = await self._session.get(PermissionModel, permission_id)  # type: ignore[assignment]
         if role_obj is None or perm_obj is None:
             raise ValueError("role or permission not found")
         if perm_obj not in role_obj.permissions:
             role_obj.permissions.append(perm_obj)
-            self._session.commit()
+            await self._session.commit()
 
 
 class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
-    def add(self, group: Group) -> None:
+    async def add(self, group: Group) -> None:
         model = GroupModel(
             id=group.id, tenant_id=group.tenant_id, name=group.name, description=group.description
         )
         self._session.add(model)
-        self._session.commit()
+        await self._session.commit()
 
-    def get(self, group_id: str) -> Optional[Group]:
-        obj: Optional[GroupModel] = self._session.get(GroupModel, group_id)
+    async def get(self, group_id: str) -> Optional[Group]:
+        obj: Optional[GroupModel] = await self._session.get(GroupModel, group_id)
         if not obj:
             return None
         role_ids = [str(r.id) for r in obj.roles]
@@ -131,12 +140,13 @@ class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
             _roles=role_ids,
         )
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Group]:
-        q = self._session.query(GroupModel)
+    async def list(self, tenant_id: Optional[str] = None) -> List[Group]:
+        stmt = select(GroupModel)
         if tenant_id is not None:
-            q = q.filter(GroupModel.tenant_id == tenant_id)
+            stmt = stmt.where(GroupModel.tenant_id == tenant_id)
+        result = await self._session.execute(stmt)
         groups: List[Group] = []
-        for obj in q:
+        for obj in result.scalars().all():
             role_ids = [str(r.id) for r in obj.roles]
             groups.append(
                 Group(
@@ -149,26 +159,26 @@ class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
             )
         return groups
 
-    def assign_role(self, group_id: str, role_id: str) -> None:
-        group_obj: GroupModel = self._session.get(GroupModel, group_id)  # type: ignore[assignment]
-        role_obj: RoleModel = self._session.get(RoleModel, role_id)  # type: ignore[assignment]
+    async def assign_role(self, group_id: str, role_id: str) -> None:
+        group_obj: GroupModel | None = await self._session.get(GroupModel, group_id)  # type: ignore[assignment]
+        role_obj: RoleModel | None = await self._session.get(RoleModel, role_id)  # type: ignore[assignment]
         if group_obj is None or role_obj is None:
             raise ValueError("group or role not found")
         if role_obj not in group_obj.roles:
             group_obj.roles.append(role_obj)
-            self._session.commit()
+            await self._session.commit()
 
 
 class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
-    def add(self, account: Account) -> None:
+    async def add(self, account: Account) -> None:
         model = AccountModel(
             id=account.id, tenant_id=account.tenant_id, username=account.username, email=account.email
         )
         self._session.add(model)
-        self._session.commit()
+        await self._session.commit()
 
-    def get(self, account_id: str) -> Optional[Account]:
-        obj: Optional[AccountModel] = self._session.get(AccountModel, account_id)
+    async def get(self, account_id: str) -> Optional[Account]:
+        obj: Optional[AccountModel] = await self._session.get(AccountModel, account_id)
         if not obj:
             return None
         role_ids = [str(r.id) for r in obj.roles]
@@ -182,12 +192,13 @@ class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
             _groups=group_ids,
         )
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Account]:
-        q = self._session.query(AccountModel)
+    async def list(self, tenant_id: Optional[str] = None) -> List[Account]:
+        stmt = select(AccountModel)
         if tenant_id is not None:
-            q = q.filter(AccountModel.tenant_id == tenant_id)
+            stmt = stmt.where(AccountModel.tenant_id == tenant_id)
+        result = await self._session.execute(stmt)
         accounts: List[Account] = []
-        for obj in q:
+        for obj in result.scalars().all():
             role_ids = [str(r.id) for r in obj.roles]
             group_ids = [str(g.id) for g in obj.groups]
             accounts.append(
@@ -202,27 +213,27 @@ class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
             )
         return accounts
 
-    def assign_role(self, account_id: str, role_id: str) -> None:
-        acc_obj: AccountModel = self._session.get(AccountModel, account_id)  # type: ignore[assignment]
-        role_obj: RoleModel = self._session.get(RoleModel, role_id)  # type: ignore[assignment]
+    async def assign_role(self, account_id: str, role_id: str) -> None:
+        acc_obj: AccountModel | None = await self._session.get(AccountModel, account_id)  # type: ignore[assignment]
+        role_obj: RoleModel | None = await self._session.get(RoleModel, role_id)  # type: ignore[assignment]
         if acc_obj is None or role_obj is None:
             raise ValueError("account or role not found")
         if role_obj not in acc_obj.roles:
             acc_obj.roles.append(role_obj)
-            self._session.commit()
+            await self._session.commit()
 
-    def assign_group(self, account_id: str, group_id: str) -> None:
-        acc_obj: AccountModel = self._session.get(AccountModel, account_id)  # type: ignore[assignment]
-        group_obj: GroupModel = self._session.get(GroupModel, group_id)  # type: ignore[assignment]
+    async def assign_group(self, account_id: str, group_id: str) -> None:
+        acc_obj: AccountModel | None = await self._session.get(AccountModel, account_id)  # type: ignore[assignment]
+        group_obj: GroupModel | None = await self._session.get(GroupModel, group_id)  # type: ignore[assignment]
         if acc_obj is None or group_obj is None:
             raise ValueError("account or group not found")
         if group_obj not in acc_obj.groups:
             acc_obj.groups.append(group_obj)
-            self._session.commit()
+            await self._session.commit()
 
 
 class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
-    def add(self, resource: Resource) -> None:
+    async def add(self, resource: Resource) -> None:
         model = ResourceModel(
             id=resource.id,
             type=resource.type,
@@ -232,10 +243,10 @@ class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
             metadata=resource.metadata,
         )
         self._session.add(model)
-        self._session.commit()
+        await self._session.commit()
 
-    def get(self, resource_id: str) -> Optional[Resource]:
-        obj: Optional[ResourceModel] = self._session.get(ResourceModel, resource_id)
+    async def get(self, resource_id: str) -> Optional[Resource]:
+        obj: Optional[ResourceModel] = await self._session.get(ResourceModel, resource_id)
         if not obj:
             return None
         return Resource(
@@ -247,12 +258,13 @@ class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
             _metadata=obj.metadata or {},
         )
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
-        q = self._session.query(ResourceModel)
+    async def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
+        stmt = select(ResourceModel)
         if tenant_id is not None:
-            q = q.filter(ResourceModel.tenant_id == tenant_id)
+            stmt = stmt.where(ResourceModel.tenant_id == tenant_id)
+        result = await self._session.execute(stmt)
         resources: List[Resource] = []
-        for obj in q:
+        for obj in result.scalars().all():
             resources.append(
                 Resource(
                     _id=str(obj.id),
@@ -269,7 +281,7 @@ class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
 class AuditLogRepository(_BaseRepo):
     """审计日志仓库。"""
 
-    def record(
+    async def record(
         self,
         account_id: str,
         action: str,
@@ -287,4 +299,4 @@ class AuditLogRepository(_BaseRepo):
             timestamp=datetime.utcnow(),
         )
         self._session.add(log)
-        self._session.commit()
+        await self._session.commit()

@@ -54,7 +54,7 @@ class DatabaseAdapter(persist.Adapter):
         self._settings = settings
         # 使用 psycopg2 直接连接数据库，适配器仅用于策略表操作
         # 开启自动提交，Casbin 每次修改都会立即写入。
-        self._conn = psycopg2.connect(self._settings.db_url)
+        self._conn = psycopg2.connect(self._settings.db_url_sync)
         self._conn.autocommit = True
 
     def _cursor(self):  # type: ignore[no-untyped-def]

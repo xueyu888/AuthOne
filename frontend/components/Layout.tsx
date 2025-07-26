@@ -19,36 +19,55 @@ export default function Layout({ children }: LayoutProps) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0.5rem 1rem',
-          borderBottom: '1px solid #eee',
+          padding: '0.75rem 1.5rem',
+          backgroundColor: '#1f2937',
+          color: 'white',
+          boxShadow: '0 2px 4px rgba(0, 0, 0, 0.08)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <Image src="/logo.png" alt="AuthOne Logo" width={36} height={36} />
-          <span style={{ marginLeft: '0.5rem', fontWeight: 600, fontSize: '1.2rem' }}>AuthOne</span>
+          <Image src="/logo.png" alt="AuthOne Logo" width={40} height={40} />
+          <span
+            style={{
+              marginLeft: '0.75rem',
+              fontWeight: 700,
+              fontSize: '1.25rem',
+              letterSpacing: '0.5px',
+            }}
+          >
+            AuthOne
+          </span>
         </div>
-        <ul style={{ listStyle: 'none', display: 'flex', gap: '1rem', margin: 0 }}>
+        <ul
+          style={{
+            listStyle: 'none',
+            display: 'flex',
+            gap: '1.25rem',
+            margin: 0,
+            padding: 0,
+          }}
+        >
           <li>
-            <Link href="/">主页</Link>
+            <Link href="/" style={{ color: 'white', fontWeight: 500 }}>主页</Link>
           </li>
           <li>
-            <Link href="/roles">角色</Link>
+            <Link href="/roles" style={{ color: 'white', fontWeight: 500 }}>角色</Link>
           </li>
           <li>
-            <Link href="/permissions">权限</Link>
+            <Link href="/permissions" style={{ color: 'white', fontWeight: 500 }}>权限</Link>
           </li>
           <li>
-            <Link href="/accounts">账户</Link>
+            <Link href="/accounts" style={{ color: 'white', fontWeight: 500 }}>账户</Link>
           </li>
           <li>
-            <Link href="/groups">用户组</Link>
+            <Link href="/groups" style={{ color: 'white', fontWeight: 500 }}>用户组</Link>
           </li>
           <li>
-            <Link href="/resources">资源</Link>
+            <Link href="/resources" style={{ color: 'white', fontWeight: 500 }}>资源</Link>
           </li>
         </ul>
       </nav>
-      <main style={{ padding: '1rem' }}>{children}</main>
+      <main style={{ padding: '1.5rem' }}>{children}</main>
     </div>
   );
 }

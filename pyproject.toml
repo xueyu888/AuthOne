@@ -12,6 +12,7 @@ pydantic = "^1.10"
 sqlalchemy = "^2.0"
 psycopg2-binary = "^2.9"
 casbin = "^1.18"
+asyncpg = "^0.30.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.4"

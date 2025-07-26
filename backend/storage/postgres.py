@@ -49,7 +49,7 @@ class PostgresDatabase:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._conn = psycopg2.connect(self._settings.db_url, cursor_factory=RealDictCursor)
+        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealDictCursor)
         self._conn.autocommit = True  # 简化示例，不建议在生产中使用 autocommit
 
     def cursor(self):  # type: ignore[no-untyped-def]

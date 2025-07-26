@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -15,15 +16,22 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     Table,
     Text,
     JSON,
-    Integer,
-    create_engine,
+    select,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+)
+
 
 from .config import Settings
 
@@ -38,6 +46,7 @@ __all__ = [
     "AccountModel",
     "ResourceModel",
     "AuditLogModel",
+    "CasbinRuleModel",
 ]
 
 
@@ -154,7 +163,20 @@ class AuditLogModel(Base):
     message: str = Column(Text, nullable=True)
     timestamp: datetime = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-class CasbinRule(Base):
+# ---------------------------------------------------------------------------
+#                            CasbinRuleModel
+# ---------------------------------------------------------------------------
+
+class CasbinRuleModel(Base):
+    """Casbin 策略模型。
+
+    该模型定义了存储 Casbin 策略的表结构。其列与 Casbin 的策略行
+    参数一一对应，适用于 ``casbin.persist.adapters`` 接口。表名默认为
+    ``casbin_rules``，可以通过 ``Settings.casbin_policy_table`` 配置。
+    
+    注意：此表仅由 Casbin 使用，上层应用不应直接操作此表。
+    """
+
     __tablename__ = "casbin_rules"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -167,17 +189,36 @@ class CasbinRule(Base):
     v5 = Column(String(255))
 
 
+async def get_engine(settings: Settings) -> AsyncEngine:
+    """Create and return an asynchronous SQLAlchemy engine.
 
-def get_engine(settings: Settings):
-    return create_engine(settings.db_url, future=True)
+    The returned engine uses the asyncpg driver for PostgreSQL. The caller is
+    responsible for ensuring that ``settings.db_url`` is an async SQLAlchemy
+    URL (e.g. ``postgresql+asyncpg://user:pass@host/db``)."""
+    return create_async_engine(settings.db_url, future=True)
 
 
-def get_session(settings: Settings) -> Session:
-    engine = get_engine(settings)
-    return sessionmaker(bind=engine, future=True)()
+def get_session(settings: Settings) -> AsyncSession:
+    """Create a new ``AsyncSession`` bound to the configured database engine.
+
+    This helper uses ``async_sessionmaker`` under the hood. Because creating
+    the session factory is cheap, we construct it on each call. The returned
+    session should be used with ``async with`` or explicitly ``await
+    session.close()`` after use.
+    """
+    engine = create_async_engine(settings.db_url, future=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    return factory()
 
 
-def init_db(settings: Settings) -> None:
-    """创建所有表结构。"""
-    engine = get_engine(settings)
-    Base.metadata.create_all(engine)
+async def init_db(settings: Settings) -> None:
+    """Create all database tables defined on the metadata.
+
+    This coroutine initializes the database by running ``create_all`` in an
+    async context. It should be awaited once during application startup to
+    ensure that all required tables exist, including the Casbin policy table.
+    """
+    engine = create_async_engine(settings.db_url, future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()

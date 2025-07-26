@@ -25,13 +25,13 @@ __all__ = [
 class PermissionRepository(Protocol):
     """权限仓库接口。"""
 
-    def add(self, permission: Permission) -> None:
+    async def add(self, permission: Permission) -> None:
         """保存权限。"""
 
-    def get(self, permission_id: str) -> Optional[Permission]:
+    async def get(self, permission_id: str) -> Optional[Permission]:
         """根据 ID 获取权限。"""
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Permission]:
+    async def list(self, tenant_id: Optional[str] = None) -> List[Permission]:
         """列出指定租户的权限，``tenant_id`` 为 None 时返回所有权限。"""
 
 
@@ -39,16 +39,16 @@ class PermissionRepository(Protocol):
 class RoleRepository(Protocol):
     """角色仓库接口。"""
 
-    def add(self, role: Role) -> None:
+    async def add(self, role: Role) -> None:
         ...
 
-    def get(self, role_id: str) -> Optional[Role]:
+    async def get(self, role_id: str) -> Optional[Role]:
         ...
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Role]:
+    async def list(self, tenant_id: Optional[str] = None) -> List[Role]:
         ...
 
-    def assign_permission(self, role_id: str, permission_id: str) -> None:
+    async def assign_permission(self, role_id: str, permission_id: str) -> None:
         """将权限分配给角色。"""
 
 
@@ -56,16 +56,16 @@ class RoleRepository(Protocol):
 class GroupRepository(Protocol):
     """用户组仓库接口。"""
 
-    def add(self, group: Group) -> None:
+    async def add(self, group: Group) -> None:
         ...
 
-    def get(self, group_id: str) -> Optional[Group]:
+    async def get(self, group_id: str) -> Optional[Group]:
         ...
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Group]:
+    async def list(self, tenant_id: Optional[str] = None) -> List[Group]:
         ...
 
-    def assign_role(self, group_id: str, role_id: str) -> None:
+    async def assign_role(self, group_id: str, role_id: str) -> None:
         ...
 
 
@@ -73,19 +73,19 @@ class GroupRepository(Protocol):
 class AccountRepository(Protocol):
     """账户仓库接口。"""
 
-    def add(self, account: Account) -> None:
+    async def add(self, account: Account) -> None:
         ...
 
-    def get(self, account_id: str) -> Optional[Account]:
+    async def get(self, account_id: str) -> Optional[Account]:
         ...
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Account]:
+    async def list(self, tenant_id: Optional[str] = None) -> List[Account]:
         ...
 
-    def assign_role(self, account_id: str, role_id: str) -> None:
+    async def assign_role(self, account_id: str, role_id: str) -> None:
         ...
 
-    def assign_group(self, account_id: str, group_id: str) -> None:
+    async def assign_group(self, account_id: str, group_id: str) -> None:
         ...
 
 
@@ -93,11 +93,11 @@ class AccountRepository(Protocol):
 class ResourceRepository(Protocol):
     """资源仓库接口。"""
 
-    def add(self, resource: Resource) -> None:
+    async def add(self, resource: Resource) -> None:
         ...
 
-    def get(self, resource_id: str) -> Optional[Resource]:
+    async def get(self, resource_id: str) -> Optional[Resource]:
         ...
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
+    async def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
         ...
