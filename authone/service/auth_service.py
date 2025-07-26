@@ -1,24 +1,8 @@
-"""高级权限管理服务。
-
-该模块实现 ``AuthService``，负责协调模型创建、持久化和策略更新。它
-同时操作存储层仓库和 Casbin 引擎，实现用户、角色、权限、用户组及
-资源的管理与权限校验。对外暴露方法遵循清晰的输入输出契约，确保
-调用者无需关心底层实现。
-
-示例::
-
-    from AuthOne.config import Settings
-    from AuthOne.service import AuthService
-    settings = Settings(db_url="postgresql://user:pass@host:5432/db")
-    svc = AuthService(settings)
-    user = svc.create_account("alice", "alice@example.com", "t1")
-    # ...
-    resp = svc.check_access(AccessCheckRequest(...))
-"""
+"""业务服务层。"""
 
 from __future__ import annotations
 
-import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from ..config import Settings
@@ -32,43 +16,58 @@ from ..models import (
     AccessCheckRequest,
     AccessCheckResponse,
 )
-from ..storage.interface import (
-    AccountRepository,
-    GroupRepository,
-    PermissionRepository,
-    ResourceRepository,
-    RoleRepository,
-)
-from ..storage.postgres import (
-    PostgresDatabase,
-    PostgresAccountRepository,
-    PostgresGroupRepository,
-    PostgresPermissionRepository,
-    PostgresResourceRepository,
-    PostgresRoleRepository,
+from ..db import get_session
+from ..storage.sqlalchemy_repository import (
+    SQLAlchemyAccountRepository,
+    SQLAlchemyGroupRepository,
+    SQLAlchemyPermissionRepository,
+    SQLAlchemyResourceRepository,
+    SQLAlchemyRoleRepository,
+    AuditLogRepository,
 )
 
 __all__ = ["AuthService"]
 
-logger = logging.getLogger(__name__)
 
-
+@dataclass(slots=True)
 class AuthService:
-    """权限管理服务。"""
+    """权限管理服务。
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-        # 初始化数据库连接和仓库实现
-        db = PostgresDatabase(settings)
-        self._perm_repo: PermissionRepository = PostgresPermissionRepository(db)
-        self._role_repo: RoleRepository = PostgresRoleRepository(db)
-        self._group_repo: GroupRepository = PostgresGroupRepository(db)
-        self._account_repo: AccountRepository = PostgresAccountRepository(db)
-        self._resource_repo: ResourceRepository = PostgresResourceRepository(db)
-        # 初始化 Casbin 引擎
-        self._casbin = CasbinEngine(settings)
+    使用 ``create`` 类方法创建实例，注入配置。服务内部持有仓库对象、
+    Casbin 引擎和审计日志仓库，对外暴露实体管理和权限校验接口。
+    """
 
-    # --------------------------- 实体创建 -----------------------------
+    _settings: Settings
+    _perm_repo: SQLAlchemyPermissionRepository
+    _role_repo: SQLAlchemyRoleRepository
+    _group_repo: SQLAlchemyGroupRepository
+    _account_repo: SQLAlchemyAccountRepository
+    _resource_repo: SQLAlchemyResourceRepository
+    _audit_repo: AuditLogRepository
+    _casbin: CasbinEngine
+
+    @classmethod
+    def create(cls, settings: Settings) -> "AuthService":
+        session = get_session(settings)
+        perm_repo = SQLAlchemyPermissionRepository(session)
+        role_repo = SQLAlchemyRoleRepository(session)
+        group_repo = SQLAlchemyGroupRepository(session)
+        account_repo = SQLAlchemyAccountRepository(session)
+        resource_repo = SQLAlchemyResourceRepository(session)
+        audit_repo = AuditLogRepository(session)
+        casbin_engine = CasbinEngine(settings)
+        return cls(
+            _settings=settings,
+            _perm_repo=perm_repo,
+            _role_repo=role_repo,
+            _group_repo=group_repo,
+            _account_repo=account_repo,
+            _resource_repo=resource_repo,
+            _audit_repo=audit_repo,
+            _casbin=casbin_engine,
+        )
+
+    # ------------------- 实体创建 -------------------
     def create_permission(self, name: str, description: str = "") -> Permission:
         perm = Permission.create(name, description)
         self._perm_repo.add(perm)
@@ -101,11 +100,9 @@ class AuthService:
         self._resource_repo.add(res)
         return res
 
-    # --------------------------- 权限与角色分配 -----------------------
+    # ------------------- 关系绑定 -------------------
     def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
-        # 更新业务表
         self._role_repo.assign_permission(role_id, permission_id)
-        # 获取相关对象以更新 Casbin
         role = self._role_repo.get(role_id)
         perm = self._perm_repo.get(permission_id)
         if not role or not perm:
@@ -118,9 +115,7 @@ class AuthService:
         role = self._role_repo.get(role_id)
         if not acc or not role:
             raise ValueError("account or role not found")
-        # 更新业务表
         self._account_repo.assign_role(account_id, role_id)
-        # 更新 Casbin：account 与 role 的 g 关系
         self._casbin.add_role_for_account(acc.id, acc.tenant_id, role.id)
 
     def assign_role_to_group(self, group_id: str, role_id: str) -> None:
@@ -129,7 +124,6 @@ class AuthService:
         if not group or not role:
             raise ValueError("group or role not found")
         self._group_repo.assign_role(group_id, role_id)
-        # g 关系：组名作为 user，角色作为 role
         self._casbin.add_role_for_group(group.id, group.tenant_id, role.id)
 
     def assign_group_to_account(self, account_id: str, group_id: str) -> None:
@@ -140,12 +134,20 @@ class AuthService:
         self._account_repo.assign_group(account_id, group_id)
         self._casbin.add_group_for_account(acc.id, acc.tenant_id, group.id)
 
-    # --------------------------- 权限校验 -----------------------------
+    # ------------------- 权限校验 -------------------
     def check_access(self, req: AccessCheckRequest) -> AccessCheckResponse:
         allowed = self._casbin.enforce(
             account=req.account_id,
             tenant_id=req.tenant_id,
             resource=req.resource,
             action=req.action,
+        )
+        # 记录审计日志
+        self._audit_repo.record(
+            account_id=req.account_id,
+            action=req.action,
+            resource=req.resource,
+            result=allowed,
+            message="allowed" if allowed else "denied",
         )
         return AccessCheckResponse(allowed=allowed, reason=None if allowed else "Access denied")

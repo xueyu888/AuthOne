@@ -1,16 +1,22 @@
-[project]
+[tool.poetry]
 name = "authone"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "xueyu",email = "xueuy@qq.com"}
-]
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-]
+description = "AuthOne - AI platform IAM service with RBAC and ABAC via Casbin"
+authors = ["Your Name <you@example.com>"]
 
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.110"
+uvicorn = "^0.27"
+pydantic = "^1.10"
+sqlalchemy = "^2.0"
+psycopg2-binary = "^2.9"
+casbin = "^1.18"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.4"
+mypy = "^1.10"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"

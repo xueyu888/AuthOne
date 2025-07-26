@@ -19,6 +19,7 @@ from .models import (
     AccessCheckRequest,
     AccessCheckResponse,
 )
+from .config import Settings
 from .service import AuthService
 
 __all__: list[str] = [
@@ -30,5 +31,6 @@ __all__: list[str] = [
     "Resource",
     "AccessCheckRequest",
     "AccessCheckResponse",
+    "Settings",
     "AuthService",
 ]

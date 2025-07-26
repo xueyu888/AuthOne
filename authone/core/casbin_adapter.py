@@ -21,7 +21,7 @@ import casbin
 from casbin import persist
 
 from ..config import Settings
-from ..storage.postgres import PostgresDatabase
+import psycopg2
 
 __all__ = ["CasbinRule", "DatabaseAdapter", "CasbinEngine"]
 
@@ -52,7 +52,13 @@ class DatabaseAdapter(persist.Adapter):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._db = PostgresDatabase(settings)
+        # 使用 psycopg2 直接连接数据库，适配器仅用于策略表操作
+        # 开启自动提交，Casbin 每次修改都会立即写入。
+        self._conn = psycopg2.connect(self._settings.db_url)
+        self._conn.autocommit = True
+
+    def _cursor(self):  # type: ignore[no-untyped-def]
+        return self._conn.cursor()
 
     # -- helper methods -------------------------------------------------
     def _save_policy_line(self, ptype: str, rule: Sequence[str]) -> None:
@@ -61,13 +67,13 @@ class DatabaseAdapter(persist.Adapter):
             INSERT INTO {self._settings.casbin_policy_table} (id, ptype, v0, v1, v2, v3, v4, v5)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        with self._db.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(sql, (str(uuid.uuid4()), ptype, *vals[:6]))
 
     # -- Adapter interface methods --------------------------------------
     def load_policy(self, model: casbin.Model) -> None:
         sql = f"SELECT ptype, v0, v1, v2, v3, v4, v5 FROM {self._settings.casbin_policy_table}"
-        with self._db.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(sql)
             for row in cur.fetchall():
                 ptype = row["ptype"]
@@ -80,7 +86,7 @@ class DatabaseAdapter(persist.Adapter):
 
     def save_policy(self, model: casbin.Model) -> bool:
         # 清空并重新保存所有策略
-        with self._db.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(f"DELETE FROM {self._settings.casbin_policy_table}")
         for sec in ["p", "g"]:
             if sec not in model.model:
@@ -99,7 +105,7 @@ class DatabaseAdapter(persist.Adapter):
         params: List[str] = list(rule)
         sql = f"DELETE FROM {self._settings.casbin_policy_table} WHERE ptype = %s"
         sql += " AND " + " AND ".join(conds)
-        with self._db.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(sql, [ptype] + params)
 
     def remove_filtered_policy(
@@ -119,7 +125,7 @@ class DatabaseAdapter(persist.Adapter):
         sql = f"DELETE FROM {self._settings.casbin_policy_table} WHERE ptype = %s"
         if conditions:
             sql += " AND " + " AND ".join(conditions)
-        with self._db.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(sql, [ptype] + params)
 
 
