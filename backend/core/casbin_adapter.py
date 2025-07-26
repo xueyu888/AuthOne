@@ -22,6 +22,8 @@ from casbin import persist
 
 from ..config import Settings
 import psycopg2
+# --- FIX: Import RealDictCursor ---
+from psycopg2.extras import RealDictCursor
 
 __all__ = ["CasbinRule", "DatabaseAdapter", "CasbinEngine"]
 
@@ -52,9 +54,8 @@ class DatabaseAdapter(persist.Adapter):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        # 使用 psycopg2 直接连接数据库，适配器仅用于策略表操作
-        # 开启自动提交，Casbin 每次修改都会立即写入。
-        self._conn = psycopg2.connect(self._settings.db_url_sync)
+        # --- FIX: Use RealDictCursor to get dictionary-like rows ---
+        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealDictCursor)
         self._conn.autocommit = True
 
     def _cursor(self):  # type: ignore[no-untyped-def]
@@ -63,22 +64,13 @@ class DatabaseAdapter(persist.Adapter):
     # -- helper methods -------------------------------------------------
     def _save_policy_line(self, ptype: str, rule: Sequence[str]) -> None:
         vals: List[Optional[str]] = list(rule) + [None] * (6 - len(rule))
+        # FIX: Align with the auto-incrementing integer ID in the schema
         sql = f"""
-            INSERT INTO {self._settings.casbin_policy_table} (id, ptype, v0, v1, v2, v3, v4, v5)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO {self._settings.casbin_policy_table} (ptype, v0, v1, v2, v3, v4, v5)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         with self._cursor() as cur:
-            # Note: The original code was inserting a UUID as the ID, but the DB schema expects an Integer.
-            # Casbin itself doesn't require a specific ID, so we can let the DB handle it or omit it
-            # if the table is set up with an auto-incrementing primary key.
-            # For this fix, we assume the DB schema from db.py is correct (auto-incrementing integer `id`).
-            # We will not insert the ID column.
-            sql = f"""
-                INSERT INTO {self._settings.casbin_policy_table} (ptype, v0, v1, v2, v3, v4, v5)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """
             cur.execute(sql, (ptype, *vals[:6]))
-
 
     # -- Adapter interface methods --------------------------------------
     def load_policy(self, model: casbin.Model) -> None:
@@ -86,17 +78,15 @@ class DatabaseAdapter(persist.Adapter):
         with self._cursor() as cur:
             cur.execute(sql)
             for row in cur.fetchall():
-                # Ensure row is a dict before accessing by key
-                line_dict = dict(row)
-                ptype = line_dict.get("ptype", "")
+                # FIX: Directly use the dictionary-like row, no need for dict()
+                ptype = row.get("ptype", "")
                 rule: List[str] = []
                 for i in range(6):
-                    val = line_dict.get(f"v{i}")
+                    val = row.get(f"v{i}")
                     if val is not None:
                         rule.append(val)
                 line = ptype + ", " + ", ".join(rule)
                 persist.load_policy_line(line, model)
-
 
     def save_policy(self, model: casbin.Model) -> bool:
         with self._cursor() as cur:
@@ -148,6 +138,7 @@ class CasbinEngine:
         self._settings = settings
         adapter = DatabaseAdapter(settings)
         self._enforcer = casbin.Enforcer(self._settings.casbin_model_path, adapter)
+        # This explicit load is good practice
         self._enforcer.load_policy()
 
     def enforce(
@@ -160,12 +151,9 @@ class CasbinEngine:
         domain = tenant_id or "public"
         return bool(self._enforcer.enforce(account, domain, resource, action))
 
-    # --- CORRECTED POLICY MANAGEMENT METHODS ---
-
     def add_permission_for_user(
         self, subject: str, tenant_id: Optional[str], resource: str, action: str
     ) -> None:
-        """Adds a policy rule (permission). Correctly handles domains."""
         domain = tenant_id or "public"
         self._enforcer.add_policy(subject, domain, resource, action)
         self._enforcer.save_policy()
@@ -173,7 +161,6 @@ class CasbinEngine:
     def add_role_for_account(
         self, account: str, tenant_id: Optional[str], role_name: str
     ) -> None:
-        """Adds a grouping policy (role assignment). Correctly handles domains."""
         domain = tenant_id or "public"
         self._enforcer.add_role_for_user_in_domain(account, role_name, domain)
         self._enforcer.save_policy()
@@ -181,7 +168,6 @@ class CasbinEngine:
     def add_role_for_group(
         self, group_name: str, tenant_id: Optional[str], role_name: str
     ) -> None:
-        """Adds a grouping policy (role assignment to a group). Correctly handles domains."""
         domain = tenant_id or "public"
         self._enforcer.add_role_for_user_in_domain(group_name, role_name, domain)
         self._enforcer.save_policy()
@@ -189,7 +175,6 @@ class CasbinEngine:
     def add_group_for_account(
         self, account: str, tenant_id: Optional[str], group_name: str
     ) -> None:
-        """Adds a grouping policy (user to group assignment). Correctly handles domains."""
         domain = tenant_id or "public"
         self._enforcer.add_role_for_user_in_domain(account, group_name, domain)
         self._enforcer.save_policy()
