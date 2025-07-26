@@ -1,0 +1,353 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 5e9568f..1d76181 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -42,7 +42,7 @@ jobs:
+ 
+       - name: Run backend tests
+         env:
+-          DATABASE_URL: postgresql://authone:authone@localhost:5432/authone_test
++          DATABASE_URL: postgresql://authone:authone@199.199.199.8:5432/authone_test
+         run: |
+           poetry run pytest -q
+ 
+diff --git a/backend/config.py b/backend/config.py
+index b0b2170..5ee4d15 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -32,8 +32,8 @@ class Settings:
+     # 默认异步数据库 URL。使用 asyncpg 作为 PostgreSQL 驱动。请根据实际
+     # 环境调整用户名、密码和数据库名。如果需要使用同步驱动，可在启动
+     # 时通过环境变量或其他方式覆盖此字段。
+-    db_url_sync: str = "postgresql://postgres:123@localhost:5432/authone"
+-    db_url: str = "postgresql+asyncpg://postgres:123@localhost:5432/authone"
++    db_url_sync: str = "postgresql://postgres:123@199.199.199.8:5432/authone"
++    db_url: str = "postgresql+asyncpg://postgres:123@199.199.199.8:5432/authone"
+     log_level: str = "INFO"
+     casbin_model_path: str = "rbac_model.conf"
+     casbin_policy_table: str = "casbin_rules"
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 1dab682..a720309 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -8,10 +8,17 @@
+       "name": "authone-frontend",
+       "version": "0.1.0",
+       "dependencies": {
+-        "axios": "^1.5.0",
++        "@hookform/resolvers": "^5.2.0",
++        "@tanstack/react-query": "^5.83.0",
++        "axios": "^1.11.0",
++        "clsx": "^2.1.1",
++        "lucide-react": "^0.525.0",
+         "next": "^14.0.0",
+         "react": "^18.2.0",
+-        "react-dom": "^18.2.0"
++        "react-dom": "^18.2.0",
++        "react-hook-form": "^7.61.1",
++        "tailwind-merge": "^3.3.1",
++        "zod": "^4.0.10"
+       },
+       "devDependencies": {
+         "@testing-library/jest-dom": "^6.0.0",
+@@ -550,6 +557,18 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@hookform/resolvers": {
++      "version": "5.2.0",
++      "resolved": "https://registry.npmjs.org/@hookform/resolvers/-/resolvers-5.2.0.tgz",
++      "integrity": "sha512-3YI+VqxJQH6ryRWG+j3k+M19Wf37LeSKJDg6Vdjq6makLOqZGYn77iTaYLMLpVi/uHc1N6OTCmcxJwhOQV979g==",
++      "license": "MIT",
++      "dependencies": {
++        "@standard-schema/utils": "^0.3.0"
++      },
++      "peerDependencies": {
++        "react-hook-form": "^7.55.0"
++      }
++    },
+     "node_modules/@istanbuljs/load-nyc-config": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/@istanbuljs/load-nyc-config/-/load-nyc-config-1.1.0.tgz",
+@@ -1205,6 +1224,12 @@
+         "@sinonjs/commons": "^3.0.0"
+       }
+     },
++    "node_modules/@standard-schema/utils": {
++      "version": "0.3.0",
++      "resolved": "https://registry.npmjs.org/@standard-schema/utils/-/utils-0.3.0.tgz",
++      "integrity": "sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==",
++      "license": "MIT"
++    },
+     "node_modules/@swc/counter": {
+       "version": "0.1.3",
+       "resolved": "https://registry.npmjs.org/@swc/counter/-/counter-0.1.3.tgz",
+@@ -1221,6 +1246,32 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@tanstack/query-core": {
++      "version": "5.83.0",
++      "resolved": "https://registry.npmjs.org/@tanstack/query-core/-/query-core-5.83.0.tgz",
++      "integrity": "sha512-0M8dA+amXUkyz5cVUm/B+zSk3xkQAcuXuz5/Q/LveT4ots2rBpPTZOzd7yJa2Utsf8D2Upl5KyjhHRY+9lB/XA==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      }
++    },
++    "node_modules/@tanstack/react-query": {
++      "version": "5.83.0",
++      "resolved": "https://registry.npmjs.org/@tanstack/react-query/-/react-query-5.83.0.tgz",
++      "integrity": "sha512-/XGYhZ3foc5H0VM2jLSD/NyBRIOK4q9kfeml4+0x2DlL6xVuAcVEW+hTlTapAmejObg0i3eNqhkr2dT+eciwoQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@tanstack/query-core": "5.83.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      },
++      "peerDependencies": {
++        "react": "^18 || ^19"
++      }
++    },
+     "node_modules/@testing-library/dom": {
+       "version": "9.3.4",
+       "resolved": "https://registry.npmjs.org/@testing-library/dom/-/dom-9.3.4.tgz",
+@@ -1994,6 +2045,15 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/clsx": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
++      "integrity": "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/co": {
+       "version": "4.6.0",
+       "resolved": "https://registry.npmjs.org/co/-/co-4.6.0.tgz",
+@@ -4666,6 +4726,15 @@
+         "yallist": "^3.0.2"
+       }
+     },
++    "node_modules/lucide-react": {
++      "version": "0.525.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-0.525.0.tgz",
++      "integrity": "sha512-Tm1txJ2OkymCGkvwoHt33Y2JpN5xucVq1slHcgE6Lk0WjDfjgKWor5CdVER8U6DvcfMwh4M8XxmpTiyzfmfDYQ==",
++      "license": "ISC",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
+     "node_modules/lz-string": {
+       "version": "1.5.0",
+       "resolved": "https://registry.npmjs.org/lz-string/-/lz-string-1.5.0.tgz",
+@@ -5293,6 +5362,22 @@
+         "react": "^18.3.1"
+       }
+     },
++    "node_modules/react-hook-form": {
++      "version": "7.61.1",
++      "resolved": "https://registry.npmjs.org/react-hook-form/-/react-hook-form-7.61.1.tgz",
++      "integrity": "sha512-2vbXUFDYgqEgM2RcXcAT2PwDW/80QARi+PKmHy5q2KhuKvOlG8iIYgf7eIlIANR5trW9fJbP4r5aub3a4egsew==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/react-hook-form"
++      },
++      "peerDependencies": {
++        "react": "^16.8.0 || ^17 || ^18 || ^19"
++      }
++    },
+     "node_modules/react-is": {
+       "version": "17.0.2",
+       "resolved": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz",
+@@ -5802,6 +5887,16 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/tailwind-merge": {
++      "version": "3.3.1",
++      "resolved": "https://registry.npmjs.org/tailwind-merge/-/tailwind-merge-3.3.1.tgz",
++      "integrity": "sha512-gBXpgUm/3rp1lMZZrM/w7D8GKqshif0zAymAhbCyIt8KMe+0v9DQ7cdYLR4FHH/cKpdTXb+A/tKKU3eolfsI+g==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/dcastil"
++      }
++    },
+     "node_modules/test-exclude": {
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/test-exclude/-/test-exclude-6.0.0.tgz",
+@@ -6196,6 +6291,15 @@
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
++    },
++    "node_modules/zod": {
++      "version": "4.0.10",
++      "resolved": "https://registry.npmjs.org/zod/-/zod-4.0.10.tgz",
++      "integrity": "sha512-3vB+UU3/VmLL2lvwcY/4RV2i9z/YU0DTV/tDuYjrwmx5WeJ7hwy+rGEEx8glHp6Yxw7ibRbKSaIFBgReRPe5KA==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/colinhacks"
++      }
+     }
+   }
+ }
+diff --git a/frontend/package.json b/frontend/package.json
+index 2256761..c7753d5 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -10,10 +10,17 @@
+     "test": "jest"
+   },
+   "dependencies": {
+-    "axios": "^1.5.0",
++    "@hookform/resolvers": "^5.2.0",
++    "@tanstack/react-query": "^5.83.0",
++    "axios": "^1.11.0",
++    "clsx": "^2.1.1",
++    "lucide-react": "^0.525.0",
+     "next": "^14.0.0",
+     "react": "^18.2.0",
+-    "react-dom": "^18.2.0"
++    "react-dom": "^18.2.0",
++    "react-hook-form": "^7.61.1",
++    "tailwind-merge": "^3.3.1",
++    "zod": "^4.0.10"
+   },
+   "devDependencies": {
+     "@testing-library/jest-dom": "^6.0.0",
+@@ -24,4 +31,4 @@
+     "ts-jest": "^29.1.0",
+     "typescript": "^5.2.0"
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/frontend/pages/accounts.tsx b/frontend/pages/accounts.tsx
+index 99011ae..f737080 100644
+--- a/frontend/pages/accounts.tsx
++++ b/frontend/pages/accounts.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import axios from 'axios';
+ 
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ interface Account {
+   id: string;
+diff --git a/frontend/pages/groups.tsx b/frontend/pages/groups.tsx
+index 461f413..4c528c3 100644
+--- a/frontend/pages/groups.tsx
++++ b/frontend/pages/groups.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import axios from 'axios';
+ 
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ interface Group {
+   id: string;
+diff --git a/frontend/pages/index.tsx b/frontend/pages/index.tsx
+index 708ac31..ea8a771 100644
+--- a/frontend/pages/index.tsx
++++ b/frontend/pages/index.tsx
+@@ -2,7 +2,7 @@ import { useState } from 'react';
+ import axios from 'axios';
+ 
+ // 默认 API 基础地址，可通过环境变量覆盖
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ /**
+  * 管理首页。
+diff --git a/frontend/pages/permissions.tsx b/frontend/pages/permissions.tsx
+index 2ab2dc7..5c5fa93 100644
+--- a/frontend/pages/permissions.tsx
++++ b/frontend/pages/permissions.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import axios from 'axios';
+ 
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ interface Permission {
+   id: string;
+diff --git a/frontend/pages/resources.tsx b/frontend/pages/resources.tsx
+index 48a86a3..4c520ae 100644
+--- a/frontend/pages/resources.tsx
++++ b/frontend/pages/resources.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import axios from 'axios';
+ 
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ interface Resource {
+   id: string;
+diff --git a/frontend/pages/roles.tsx b/frontend/pages/roles.tsx
+index 71937a6..0ee5b0a 100644
+--- a/frontend/pages/roles.tsx
++++ b/frontend/pages/roles.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import axios from 'axios';
+ 
+-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
++const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
+ 
+ interface Role {
+   id: string;
+diff --git a/frontend/tsconfig.json b/frontend/tsconfig.json
+index e9e1d66..afe04b7 100644
+--- a/frontend/tsconfig.json
++++ b/frontend/tsconfig.json
+@@ -2,13 +2,29 @@
+   "compilerOptions": {
+     "target": "ES6",
+     "module": "ESNext",
+-    "jsx": "react-jsx",
++    "jsx": "preserve",
+     "strict": true,
+     "esModuleInterop": true,
+     "moduleResolution": "Node",
+     "allowJs": false,
+     "forceConsistentCasingInFileNames": true,
+-    "skipLibCheck": true
++    "skipLibCheck": true,
++    "lib": [
++      "dom",
++      "dom.iterable",
++      "esnext"
++    ],
++    "noEmit": true,
++    "incremental": true,
++    "resolveJsonModule": true,
++    "isolatedModules": true
+   },
+-  "include": ["pages", "components", "tests"]
+-}
+\ No newline at end of file
++  "include": [
++    "pages",
++    "components",
++    "tests"
++  ],
++  "exclude": [
++    "node_modules"
++  ]
++}

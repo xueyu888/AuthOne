@@ -42,7 +42,7 @@ jobs:
 
       - name: Run backend tests
         env:
-          DATABASE_URL: postgresql://authone:authone@localhost:5432/authone_test
+          DATABASE_URL: postgresql://authone:authone@199.199.199.8:5432/authone_test
         run: |
           poetry run pytest -q
 

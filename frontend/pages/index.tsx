@@ -2,7 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 
 // 默认 API 基础地址，可通过环境变量覆盖
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
 
 /**
  * 管理首页。

@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from ..models import Account, Group, Permission, Resource, Role
 from ..db import (
@@ -90,23 +91,20 @@ class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
             _permissions=perm_ids,
         )
 
-    async def list(self, tenant_id: Optional[str] = None) -> List[Role]:
-        stmt = select(RoleModel)
+    async def list(self, tenant_id: Optional[str] = None) -> list[Role]:
+        # 预加载权限集合，避免异步环境下懒加载触发 MissingGreenlet 异常
+        stmt = select(RoleModel).options(selectinload(RoleModel.permissions))
         if tenant_id is not None:
             stmt = stmt.where(RoleModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
-        roles: List[Role] = []
+        roles: list[Role] = []
         for obj in result.scalars().all():
             perm_ids = [str(p.id) for p in obj.permissions]
-            roles.append(
-                Role(
-                    _id=str(obj.id),
-                    _tenant_id=obj.tenant_id,
-                    _name=obj.name,
-                    _description=obj.description or "",
-                    _permissions=perm_ids,
-                )
-            )
+            roles.append(Role(_id=str(obj.id),
+                              _tenant_id=obj.tenant_id,
+                              _name=obj.name,
+                              _description=obj.description or "",
+                              _permissions=perm_ids))
         return roles
 
     async def assign_permission(self, role_id: str, permission_id: str) -> None:
@@ -140,23 +138,20 @@ class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
             _roles=role_ids,
         )
 
-    async def list(self, tenant_id: Optional[str] = None) -> List[Group]:
-        stmt = select(GroupModel)
+    async def list(self, tenant_id: Optional[str] = None) -> list[Group]:
+        # 预加载角色集合，避免异步环境下懒加载触发 MissingGreenlet 异常
+        stmt = select(GroupModel).options(selectinload(GroupModel.roles))
         if tenant_id is not None:
             stmt = stmt.where(GroupModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
-        groups: List[Group] = []
+        groups: list[Group] = []
         for obj in result.scalars().all():
             role_ids = [str(r.id) for r in obj.roles]
-            groups.append(
-                Group(
-                    _id=str(obj.id),
-                    _tenant_id=obj.tenant_id,
-                    _name=obj.name,
-                    _description=obj.description or "",
-                    _roles=role_ids,
-                )
-            )
+            groups.append(Group(_id=str(obj.id),
+                                _tenant_id=obj.tenant_id,
+                                _name=obj.name,
+                                _description=obj.description or "",
+                                _roles=role_ids))
         return groups
 
     async def assign_role(self, group_id: str, role_id: str) -> None:
@@ -192,25 +187,25 @@ class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
             _groups=group_ids,
         )
 
-    async def list(self, tenant_id: Optional[str] = None) -> List[Account]:
-        stmt = select(AccountModel)
+    async def list(self, tenant_id: Optional[str] = None) -> list[Account]:
+        # 预加载角色和用户组集合，避免异步环境下懒加载触发 MissingGreenlet 异常
+        stmt = select(AccountModel).options(
+            selectinload(AccountModel.roles),
+            selectinload(AccountModel.groups),
+        )
         if tenant_id is not None:
             stmt = stmt.where(AccountModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
-        accounts: List[Account] = []
+        accounts: list[Account] = []
         for obj in result.scalars().all():
             role_ids = [str(r.id) for r in obj.roles]
             group_ids = [str(g.id) for g in obj.groups]
-            accounts.append(
-                Account(
-                    _id=str(obj.id),
-                    _username=obj.username,
-                    _email=obj.email,
-                    _tenant_id=obj.tenant_id,
-                    _roles=role_ids,
-                    _groups=group_ids,
-                )
-            )
+            accounts.append(Account(_id=str(obj.id),
+                                    _username=obj.username,
+                                    _email=obj.email,
+                                    _tenant_id=obj.tenant_id,
+                                    _roles=role_ids,
+                                    _groups=group_ids))
         return accounts
 
     async def assign_role(self, account_id: str, role_id: str) -> None:
