@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Path
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings
 from .models import (
@@ -18,6 +19,14 @@ from .service import AuthService
 from .db import init_db
 
 app = FastAPI(title="AuthOne IAM Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 或限制具体来源
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有方法，包括 OPTIONS
+    allow_headers=["*"],  # 允许所有 headers
+)
 
 _settings: Settings | None = None
 _svc: AuthService | None = None
