@@ -3,20 +3,226 @@ import Image from 'next/image';
 import { ReactNode, useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { BarChart3, Users, Shield, Archive, Settings, Bell, User, Check, X, Cog, Palette, Globe, Info, Sun, Moon, Monitor, ChevronDown } from 'lucide-react';
+import { useTranslation } from '../contexts/TranslationContext';
 
 interface LayoutProps {
   children: ReactNode;
 }
 
+const translations = {
+  'zh-CN': {
+    dashboard: '仪表盘',
+    userManagement: '用户管理',
+    permissionManagement: '权限管理',
+    resourceManagement: '资源管理',
+    notifications: '通知',
+    settings: '设置',
+    systemSettings: '系统设置',
+    appearance: '外观',
+    language: '语言',
+    about: '关于 AuthOne',
+    markAllRead: '全部已读',
+    noNotifications: '暂无通知',
+    viewAllNotifications: '查看所有通知',
+    newUserRegistration: '新用户注册',
+    permissionChange: '权限变更',
+    systemMaintenance: '系统维护',
+    resourceAccess: '资源访问',
+    userRegistered: '用户 张三 已成功注册账户',
+    roleUpdated: '角色 "管理员" 的权限已更新',
+    maintenanceNotice: '系统将于今晚23:00进行维护',
+    datasetAccessed: '数据集 "用户行为分析" 被访问',
+    minutesAgo: '分钟前',
+    hoursAgo: '小时前',
+    appearanceSettings: '外观设置',
+    chooseTheme: '选择你喜欢的界面主题',
+    lightMode: '白天模式',
+    lightModeDesc: '明亮清晰的界面风格',
+    darkMode: '黑夜模式',
+    darkModeDesc: '护眼的深色界面风格',
+    systemMode: '跟随系统',
+    systemModeDesc: '自动跟随系统外观设置',
+    done: '完成',
+    languageSettings: '语言设置',
+    chooseLanguage: '选择你偏好的界面语言',
+    interfaceLanguage: '界面语言',
+    currentLanguage: '当前选择的语言',
+    // 用户管理相关
+    users: '用户',
+    roles: '角色',
+    groups: '用户组',
+    userManagementTitle: '用户管理',
+    roleManagementTitle: '角色管理',
+    groupManagementTitle: '用户组管理',
+    createUser: '新建用户',
+    createRole: '新建角色',
+    createGroup: '新建用户组',
+    createNewUser: '创建新用户',
+    createNewRole: '创建新角色',
+    createNewGroup: '创建新用户组',
+    username: '用户名',
+    email: '邮箱',
+    roleName: '角色名称',
+    groupName: '用户组名称',
+    description: '描述',
+    permissionCount: '权限数量',
+    roleCount: '角色数量',
+    actions: '操作',
+    edit: '编辑',
+    assignPermissions: '分配权限',
+    assignRoles: '分配角色',
+    cancel: '取消',
+    create: '创建',
+    creating: '创建中...',
+    permissions: '个权限',
+    rolesCount: '个角色'
+  },
+  'zh-TW': {
+    dashboard: '儀表板',
+    userManagement: '用戶管理',
+    permissionManagement: '權限管理',
+    resourceManagement: '資源管理',
+    notifications: '通知',
+    settings: '設置',
+    systemSettings: '系統設置',
+    appearance: '外觀',
+    language: '語言',
+    about: '關於 AuthOne',
+    markAllRead: '全部已讀',
+    noNotifications: '暫無通知',
+    viewAllNotifications: '查看所有通知',
+    newUserRegistration: '新用戶註冊',
+    permissionChange: '權限變更',
+    systemMaintenance: '系統維護',
+    resourceAccess: '資源訪問',
+    userRegistered: '用戶 張三 已成功註冊賬戶',
+    roleUpdated: '角色 "管理員" 的權限已更新',
+    maintenanceNotice: '系統將於今晚23:00進行維護',
+    datasetAccessed: '數據集 "用戶行為分析" 被訪問',
+    minutesAgo: '分鐘前',
+    hoursAgo: '小時前',
+    appearanceSettings: '外觀設置',
+    chooseTheme: '選擇你喜歡的界面主題',
+    lightMode: '白天模式',
+    lightModeDesc: '明亮清晰的界面風格',
+    darkMode: '黑夜模式',
+    darkModeDesc: '護眼的深色界面風格',
+    systemMode: '跟隨系統',
+    systemModeDesc: '自動跟隨系統外觀設置',
+    done: '完成',
+    languageSettings: '語言設置',
+    chooseLanguage: '選擇你偏好的界面語言',
+    interfaceLanguage: '界面語言',
+    currentLanguage: '當前選擇的語言',
+    // 用戶管理相關
+    users: '用戶',
+    roles: '角色',
+    groups: '用戶組',
+    userManagementTitle: '用戶管理',
+    roleManagementTitle: '角色管理',
+    groupManagementTitle: '用戶組管理',
+    createUser: '新建用戶',
+    createRole: '新建角色',
+    createGroup: '新建用戶組',
+    createNewUser: '創建新用戶',
+    createNewRole: '創建新角色',
+    createNewGroup: '創建新用戶組',
+    username: '用戶名',
+    email: '郵箱',
+    roleName: '角色名稱',
+    groupName: '用戶組名稱',
+    description: '描述',
+    permissionCount: '權限數量',
+    roleCount: '角色數量',
+    actions: '操作',
+    edit: '編輯',
+    assignPermissions: '分配權限',
+    assignRoles: '分配角色',
+    cancel: '取消',
+    create: '創建',
+    creating: '創建中...',
+    permissions: '個權限',
+    rolesCount: '個角色'
+  },
+  'en': {
+    dashboard: 'Dashboard',
+    userManagement: 'User Management',
+    permissionManagement: 'Permission Management',
+    resourceManagement: 'Resource Management',
+    notifications: 'Notifications',
+    settings: 'Settings',
+    systemSettings: 'System Settings',
+    appearance: 'Appearance',
+    language: 'Language',
+    about: 'About AuthOne',
+    markAllRead: 'Mark All Read',
+    noNotifications: 'No notifications',
+    viewAllNotifications: 'View All Notifications',
+    newUserRegistration: 'New User Registration',
+    permissionChange: 'Permission Change',
+    systemMaintenance: 'System Maintenance',
+    resourceAccess: 'Resource Access',
+    userRegistered: 'User Zhang San has successfully registered',
+    roleUpdated: 'Role "Administrator" permissions updated',
+    maintenanceNotice: 'System maintenance scheduled for 23:00 tonight',
+    datasetAccessed: 'Dataset "User Behavior Analysis" accessed',
+    minutesAgo: 'minutes ago',
+    hoursAgo: 'hours ago',
+    appearanceSettings: 'Appearance Settings',
+    chooseTheme: 'Choose your preferred interface theme',
+    lightMode: 'Light Mode',
+    lightModeDesc: 'Bright and clear interface style',
+    darkMode: 'Dark Mode',
+    darkModeDesc: 'Eye-friendly dark interface style',
+    systemMode: 'Follow System',
+    systemModeDesc: 'Automatically follow system appearance settings',
+    done: 'Done',
+    languageSettings: 'Language Settings',
+    chooseLanguage: 'Choose your preferred interface language',
+    interfaceLanguage: 'Interface Language',
+    currentLanguage: 'Currently selected language',
+    // User Management Related
+    users: 'Users',
+    roles: 'Roles',
+    groups: 'Groups',
+    userManagementTitle: 'User Management',
+    roleManagementTitle: 'Role Management',
+    groupManagementTitle: 'Group Management',
+    createUser: 'Create User',
+    createRole: 'Create Role',
+    createGroup: 'Create Group',
+    createNewUser: 'Create New User',
+    createNewRole: 'Create New Role',
+    createNewGroup: 'Create New Group',
+    username: 'Username',
+    email: 'Email',
+    roleName: 'Role Name',
+    groupName: 'Group Name',
+    description: 'Description',
+    permissionCount: 'Permission Count',
+    roleCount: 'Role Count',
+    actions: 'Actions',
+    edit: 'Edit',
+    assignPermissions: 'Assign Permissions',
+    assignRoles: 'Assign Roles',
+    cancel: 'Cancel',
+    create: 'Create',
+    creating: 'Creating...',
+    permissions: ' permissions',
+    rolesCount: ' roles'
+  }
+};
+
 const navItems = [
-  { href: '/', label: '仪表盘', icon: BarChart3 },
-  { href: '/accounts', label: '用户管理', icon: Users },
-  { href: '/permissions', label: '权限管理', icon: Shield },
-  { href: '/resources', label: '资源管理', icon: Archive },
+  { href: '/', key: 'dashboard' as keyof typeof translations['zh-CN'], icon: BarChart3 },
+  { href: '/accounts', key: 'userManagement' as keyof typeof translations['zh-CN'], icon: Users },
+  { href: '/permissions', key: 'permissionManagement' as keyof typeof translations['zh-CN'], icon: Shield },
+  { href: '/resources', key: 'resourceManagement' as keyof typeof translations['zh-CN'], icon: Archive },
 ];
 
 export default function Layout({ children }: LayoutProps) {
   const router = useRouter();
+  const { t, language, setLanguage } = useTranslation();
   const [showNotifications, setShowNotifications] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -24,39 +230,37 @@ export default function Layout({ children }: LayoutProps) {
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
   const [showLanguageModal, setShowLanguageModal] = useState(false);
-  const [language, setLanguage] = useState<'zh-CN' | 'zh-TW' | 'en'>('zh-CN');
 
-  // 模拟通知数据
   const notifications = [
     {
       id: 1,
-      title: '新用户注册',
-      message: '用户 张三 已成功注册账户',
-      time: '2分钟前',
+      titleKey: 'newUserRegistration' as keyof typeof translations['zh-CN'],
+      messageKey: 'userRegistered' as keyof typeof translations['zh-CN'],
+      time: `2${t('minutesAgo')}`,
       unread: true,
       type: 'user'
     },
     {
       id: 2,
-      title: '权限变更',
-      message: '角色 "管理员" 的权限已更新',
-      time: '15分钟前',
+      titleKey: 'permissionChange' as keyof typeof translations['zh-CN'],
+      messageKey: 'roleUpdated' as keyof typeof translations['zh-CN'],
+      time: `15${t('minutesAgo')}`,
       unread: true,
       type: 'permission'
     },
     {
       id: 3,
-      title: '系统维护',
-      message: '系统将于今晚23:00进行维护',
-      time: '1小时前',
+      titleKey: 'systemMaintenance' as keyof typeof translations['zh-CN'],
+      messageKey: 'maintenanceNotice' as keyof typeof translations['zh-CN'],
+      time: `1${t('hoursAgo')}`,
       unread: false,
       type: 'system'
     },
     {
       id: 4,
-      title: '资源访问',
-      message: '数据集 "用户行为分析" 被访问',
-      time: '2小时前',
+      titleKey: 'resourceAccess' as keyof typeof translations['zh-CN'],
+      messageKey: 'datasetAccessed' as keyof typeof translations['zh-CN'],
+      time: `2${t('hoursAgo')}`,
       unread: false,
       type: 'resource'
     }
@@ -97,14 +301,9 @@ export default function Layout({ children }: LayoutProps) {
     setTheme(newTheme);
   };
 
-  const handleLanguageChange = (newLanguage: 'zh-CN' | 'zh-TW' | 'en') => {
-    localStorage.setItem('language', newLanguage);
-    setLanguage(newLanguage);
-  };
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | 'system' || 'system';
-    const savedLanguage = localStorage.getItem('language') as 'zh-CN' | 'zh-TW' | 'en' || 'zh-CN';
     
     let actualTheme = savedTheme;
     if (savedTheme === 'system') {
@@ -119,7 +318,6 @@ export default function Layout({ children }: LayoutProps) {
     }
     
     setTheme(savedTheme);
-    setLanguage(savedLanguage);
   }, []);
 
   return (
@@ -161,7 +359,7 @@ export default function Layout({ children }: LayoutProps) {
                       }`}
                     >
                       <Icon className="w-4 h-4 mr-2" />
-                      {item.label}
+                      {t(item.key)}
                     </Link>
                   );
                 })}
@@ -207,11 +405,11 @@ export default function Layout({ children }: LayoutProps) {
                          }}>
                       {/* 头部 */}
                       <div className="flex items-center justify-between p-4 border-b border-slate-200/60 dark:border-slate-600/60">
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">通知</h3>
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t('notifications')}</h3>
                         <div className="flex items-center space-x-2">
                           {unreadCount > 0 && (
                             <button className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium">
-                              全部已读
+                              {t('markAllRead')}
                             </button>
                           )}
                           <button 
@@ -252,14 +450,14 @@ export default function Layout({ children }: LayoutProps) {
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between">
                                       <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
-                                        {notification.title}
+                                        {t(notification.titleKey)}
                                       </h4>
                                       {notification.unread && (
                                         <div className="flex-shrink-0 w-2 h-2 bg-blue-500 rounded-full"></div>
                                       )}
                                     </div>
                                     <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">
-                                      {notification.message}
+                                      {t(notification.messageKey)}
                                     </p>
                                     <span className="text-xs text-slate-500 dark:text-slate-400 mt-2 block">
                                       {notification.time}
@@ -272,7 +470,7 @@ export default function Layout({ children }: LayoutProps) {
                         ) : (
                           <div className="p-8 text-center">
                             <Bell className="w-8 h-8 text-slate-400 dark:text-slate-500 mx-auto mb-3" />
-                            <p className="text-slate-500 dark:text-slate-400 font-medium">暂无通知</p>
+                            <p className="text-slate-500 dark:text-slate-400 font-medium">{t('noNotifications')}</p>
                           </div>
                         )}
                       </div>
@@ -281,7 +479,7 @@ export default function Layout({ children }: LayoutProps) {
                       {notifications.length > 0 && (
                         <div className="p-3 border-t border-slate-200/60 dark:border-slate-600/60">
                           <button className="w-full text-center text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                            查看所有通知
+                            {t('viewAllNotifications')}
                           </button>
                         </div>
                       )}
@@ -322,7 +520,7 @@ export default function Layout({ children }: LayoutProps) {
                          }}>
                       {/* 头部 */}
                       <div className="flex items-center justify-between p-4 border-b border-slate-200/60 dark:border-slate-600/60">
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">设置</h3>
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t('settings')}</h3>
                         <button 
                           onClick={handleCloseSettings}
                           className="p-1 rounded-md text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
@@ -336,7 +534,7 @@ export default function Layout({ children }: LayoutProps) {
                         {/* 系统设置 */}
                         <button className="w-full flex items-center px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                           <Cog className="w-4 h-4 text-slate-600 dark:text-slate-400 mr-3" />
-                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">系统设置</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('systemSettings')}</span>
                         </button>
 
                         {/* 外观 */}
@@ -348,7 +546,7 @@ export default function Layout({ children }: LayoutProps) {
                           className="w-full flex items-center px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                         >
                           <Palette className="w-4 h-4 text-slate-600 dark:text-slate-400 mr-3" />
-                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('appearance')}</span>
                         </button>
 
                         {/* 语言 */}
@@ -360,7 +558,7 @@ export default function Layout({ children }: LayoutProps) {
                           className="w-full flex items-center px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                         >
                           <Globe className="w-4 h-4 text-slate-600 dark:text-slate-400 mr-3" />
-                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">语言</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('language')}</span>
                         </button>
 
                         {/* 分割线 */}
@@ -369,7 +567,7 @@ export default function Layout({ children }: LayoutProps) {
                         {/* 关于 AuthOne */}
                         <button className="w-full flex items-center px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                           <Info className="w-4 h-4 text-slate-600 dark:text-slate-400 mr-3" />
-                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">关于 AuthOne</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('about')}</span>
                         </button>
                       </div>
                     </div>
@@ -386,7 +584,7 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* 主内容区域 - 添加顶部padding以避免被固定导航栏遮挡 */}
       <main className="pt-16">
-        <div className="max-w-7xl mx-auto py-8 px-6">
+        <div className="py-8 px-6">
           {children}
         </div>
       </main>
@@ -415,8 +613,8 @@ export default function Layout({ children }: LayoutProps) {
                   {/* 头部 */}
                   <div className="flex items-center justify-between mb-8">
                     <div>
-                      <h3 className="text-2xl font-bold text-gray-900 dark:text-slate-100 mb-2 tracking-tight">外观设置</h3>
-                      <p className="text-base font-medium text-gray-600 dark:text-slate-400">选择你喜欢的界面主题</p>
+                      <h3 className="text-2xl font-bold text-gray-900 dark:text-slate-100 mb-2 tracking-tight">{t('appearanceSettings')}</h3>
+                      <p className="text-base font-medium text-gray-600 dark:text-slate-400">{t('chooseTheme')}</p>
                     </div>
                     <button
                       onClick={() => setShowThemeModal(false)}
@@ -444,8 +642,8 @@ export default function Layout({ children }: LayoutProps) {
                           </div>
                         </div>
                         <div className="flex-1 text-left">
-                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">白天模式</h4>
-                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">明亮清晰的界面风格</p>
+                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{t('lightMode')}</h4>
+                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">{t('lightModeDesc')}</p>
                         </div>
                         {theme === 'light' && (
                           <div className="flex-shrink-0">
@@ -473,8 +671,8 @@ export default function Layout({ children }: LayoutProps) {
                           </div>
                         </div>
                         <div className="flex-1 text-left">
-                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">黑夜模式</h4>
-                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">护眼的深色界面风格</p>
+                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{t('darkMode')}</h4>
+                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">{t('darkModeDesc')}</p>
                         </div>
                         {theme === 'dark' && (
                           <div className="flex-shrink-0">
@@ -502,8 +700,8 @@ export default function Layout({ children }: LayoutProps) {
                           </div>
                         </div>
                         <div className="flex-1 text-left">
-                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">跟随系统</h4>
-                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">自动跟随系统外观设置</p>
+                          <h4 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{t('systemMode')}</h4>
+                          <p className="text-sm text-gray-600 dark:text-slate-400 mt-1">{t('systemModeDesc')}</p>
                         </div>
                         {theme === 'system' && (
                           <div className="flex-shrink-0">
@@ -522,7 +720,7 @@ export default function Layout({ children }: LayoutProps) {
                       onClick={() => setShowThemeModal(false)}
                       className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-bold text-base rounded-2xl hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all duration-200 shadow-lg hover:shadow-xl"
                     >
-                      完成
+                      {t('done')}
                     </button>
                   </div>
                 </div>
@@ -556,8 +754,8 @@ export default function Layout({ children }: LayoutProps) {
                   {/* 头部 */}
                   <div className="flex items-center justify-between mb-8">
                     <div>
-                      <h3 className="text-2xl font-bold text-gray-900 dark:text-slate-100 mb-2 tracking-tight">语言设置</h3>
-                      <p className="text-base font-medium text-gray-600 dark:text-slate-400">选择你偏好的界面语言</p>
+                      <h3 className="text-2xl font-bold text-gray-900 dark:text-slate-100 mb-2 tracking-tight">{t('languageSettings')}</h3>
+                      <p className="text-base font-medium text-gray-600 dark:text-slate-400">{t('chooseLanguage')}</p>
                     </div>
                     <button
                       onClick={() => setShowLanguageModal(false)}
@@ -571,12 +769,12 @@ export default function Layout({ children }: LayoutProps) {
                   <div className="space-y-4">
                     <div className="relative">
                       <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
-                        界面语言
+                        {t('interfaceLanguage')}
                       </label>
                       <div className="relative">
                         <select
                           value={language}
-                          onChange={(e) => handleLanguageChange(e.target.value as 'zh-CN' | 'zh-TW' | 'en')}
+                          onChange={(e) => setLanguage(e.target.value as 'zh-CN' | 'zh-TW' | 'en')}
                           className="w-full p-4 pr-10 bg-white/70 dark:bg-slate-700/70 border border-gray-200 dark:border-slate-600 rounded-2xl text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all duration-200 appearance-none font-medium"
                         >
                           <option value="zh-CN">简体中文</option>
@@ -600,9 +798,7 @@ export default function Layout({ children }: LayoutProps) {
                              'English'}
                           </h4>
                           <p className="text-xs text-gray-600 dark:text-slate-400">
-                            {language === 'zh-CN' ? '当前选择的语言' : 
-                             language === 'zh-TW' ? '當前選擇的語言' : 
-                             'Currently selected language'}
+                            {t('currentLanguage')}
                           </p>
                         </div>
                       </div>
@@ -615,9 +811,7 @@ export default function Layout({ children }: LayoutProps) {
                       onClick={() => setShowLanguageModal(false)}
                       className="px-6 py-3 bg-gradient-to-r from-green-600 to-blue-600 text-white font-bold text-base rounded-2xl hover:from-green-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-green-500/50 transition-all duration-200 shadow-lg hover:shadow-xl"
                     >
-                      {language === 'zh-CN' ? '完成' : 
-                       language === 'zh-TW' ? '完成' : 
-                       'Done'}
+                      {t('done')}
                     </button>
                   </div>
                 </div>
