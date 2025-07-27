@@ -66,7 +66,37 @@ const translations = {
     create: '创建',
     creating: '创建中...',
     permissions: '个权限',
-    rolesCount: '个角色'
+    rolesCount: '个角色',
+    // 权限管理页面
+    permissionManagementTitle: '权限管理',
+    createPermission: '新建权限',
+    createNewPermission: '创建新权限',
+    permissionName: '权限名称',
+    // 资源管理页面
+    resourceManagementTitle: '资源管理',
+    createResource: '新建资源',
+    createNewResource: '创建新资源',
+    resourceName: '资源名称',
+    resourceType: '资源类型',
+    owner: '所有者',
+    selectResourceType: '选择资源类型',
+    file: '文件',
+    service: '服务',
+    // 仪表盘页面
+    dashboardTitle: '系统仪表盘',
+    dashboardSubtitle: '实时监控系统状态和关键指标',
+    systemStatus: '系统状态',
+    authService: '认证服务',
+    database: '数据库',
+    cache: '缓存',
+    running: '运行中',
+    healthy: '健康',
+    warning: '警告',
+    recentActivity: '最近活动',
+    userCreated: '用户已创建',
+    roleUpdated: '角色已更新',
+    permissionAssigned: '权限已分配',
+    resourceAccessed: '资源已访问'
   },
   'zh-TW': {
     dashboard: '儀表板',
@@ -133,7 +163,37 @@ const translations = {
     create: '創建',
     creating: '創建中...',
     permissions: '個權限',
-    rolesCount: '個角色'
+    rolesCount: '個角色',
+    // 權限管理頁面
+    permissionManagementTitle: '權限管理',
+    createPermission: '新建權限',
+    createNewPermission: '創建新權限',
+    permissionName: '權限名稱',
+    // 資源管理頁面
+    resourceManagementTitle: '資源管理',
+    createResource: '新建資源',
+    createNewResource: '創建新資源',
+    resourceName: '資源名稱',
+    resourceType: '資源類型',
+    owner: '所有者',
+    selectResourceType: '選擇資源類型',
+    file: '文件',
+    service: '服務',
+    // 儀表盤頁面
+    dashboardTitle: '系統儀表盤',
+    dashboardSubtitle: '實時監控系統狀態和關鍵指標',
+    systemStatus: '系統狀態',
+    authService: '認證服務',
+    database: '數據庫',
+    cache: '緩存',
+    running: '運行中',
+    healthy: '健康',
+    warning: '警告',
+    recentActivity: '最近活動',
+    userCreated: '用戶已創建',
+    roleUpdated: '角色已更新',
+    permissionAssigned: '權限已分配',
+    resourceAccessed: '資源已訪問'
   },
   'en': {
     dashboard: 'Dashboard',
@@ -200,7 +260,37 @@ const translations = {
     create: 'Create',
     creating: 'Creating...',
     permissions: ' permissions',
-    rolesCount: ' roles'
+    rolesCount: ' roles',
+    // Permission Management Page
+    permissionManagementTitle: 'Permission Management',
+    createPermission: 'Create Permission',
+    createNewPermission: 'Create New Permission',
+    permissionName: 'Permission Name',
+    // Resource Management Page
+    resourceManagementTitle: 'Resource Management',
+    createResource: 'Create Resource',
+    createNewResource: 'Create New Resource',
+    resourceName: 'Resource Name',
+    resourceType: 'Resource Type',
+    owner: 'Owner',
+    selectResourceType: 'Select Resource Type',
+    file: 'File',
+    service: 'Service',
+    // Dashboard Page
+    dashboardTitle: 'System Dashboard',
+    dashboardSubtitle: 'Real-time monitoring of system status and key metrics',
+    systemStatus: 'System Status',
+    authService: 'Auth Service',
+    database: 'Database',
+    cache: 'Cache',
+    running: 'Running',
+    healthy: 'Healthy',
+    warning: 'Warning',
+    recentActivity: 'Recent Activity',
+    userCreated: 'User created',
+    roleUpdated: 'Role updated',
+    permissionAssigned: 'Permission assigned',
+    resourceAccessed: 'Resource accessed'
   }
 };
 
