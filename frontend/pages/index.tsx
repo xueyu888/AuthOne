@@ -1,194 +1,191 @@
-import { useState, useEffect } from 'react';
-import { Shield, Users, Key, UserCheck, Archive, TrendingUp, Activity } from 'lucide-react';
-import axios from 'axios';
+import { useQuery } from "@tanstack/react-query"
+import { getAccounts, getRoles, getGroups, getPermissions, getResources } from "../api"
+import { Users, Shield, Settings, Archive, TrendingUp, Activity, CheckCircle, AlertCircle } from "lucide-react"
+import { useTranslation } from "../contexts/TranslationContext"
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://199.199.199.8:8000';
-
-interface Stats {
-  accounts: number;
-  roles: number;
-  permissions: number;
-  groups: number;
-  resources: number;
-}
+const TENANT_ID = "default_tenant"
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<Stats>({
-    accounts: 0,
-    roles: 0,
-    permissions: 0,
-    groups: 0,
-    resources: 0,
-  });
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation()
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const [accounts, roles, permissions, groups, resources] = await Promise.all([
-          axios.get(`${API_BASE}/accounts`),
-          axios.get(`${API_BASE}/roles`),
-          axios.get(`${API_BASE}/permissions`),
-          axios.get(`${API_BASE}/groups`),
-          axios.get(`${API_BASE}/resources`),
-        ]);
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts", TENANT_ID],
+    queryFn: () => getAccounts(TENANT_ID),
+  })
 
-        setStats({
-          accounts: accounts.data.length,
-          roles: roles.data.length,
-          permissions: permissions.data.length,
-          groups: groups.data.length,
-          resources: resources.data.length,
-        });
-      } catch (error) {
-        console.error('Failed to fetch stats:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const { data: roles } = useQuery({
+    queryKey: ["roles", TENANT_ID],
+    queryFn: () => getRoles(TENANT_ID),
+  })
 
-    fetchStats();
-  }, []);
+  const { data: groups } = useQuery({
+    queryKey: ["groups", TENANT_ID],
+    queryFn: () => getGroups(TENANT_ID),
+  })
 
-  const statCards = [
+  const { data: permissions } = useQuery({
+    queryKey: ["permissions", TENANT_ID],
+    queryFn: () => getPermissions(TENANT_ID),
+  })
+
+  const { data: resources } = useQuery({
+    queryKey: ["resources", TENANT_ID],
+    queryFn: () => getResources(TENANT_ID),
+  })
+
+  const stats = [
     {
-      title: '账户总数',
-      value: stats.accounts,
+      name: t('users'),
+      value: accounts?.length || 0,
       icon: Users,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
+      color: 'bg-blue-500',
+      lightBg: 'bg-blue-50 dark:bg-blue-900/20',
+      textColor: 'text-blue-600 dark:text-blue-400'
     },
     {
-      title: '角色数量',
-      value: stats.roles,
-      icon: UserCheck,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
+      name: t('roles'),
+      value: roles?.length || 0,
+      icon: Shield,
+      color: 'bg-purple-500',
+      lightBg: 'bg-purple-50 dark:bg-purple-900/20',
+      textColor: 'text-purple-600 dark:text-purple-400'
     },
     {
-      title: '权限数量',
-      value: stats.permissions,
-      icon: Key,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-50',
+      name: t('groups'),
+      value: groups?.length || 0,
+      icon: Settings,
+      color: 'bg-green-500',
+      lightBg: 'bg-green-50 dark:bg-green-900/20',
+      textColor: 'text-green-600 dark:text-green-400'
     },
     {
-      title: '用户组',
-      value: stats.groups,
-      icon: Users,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-50',
-    },
-    {
-      title: '资源数量',
-      value: stats.resources,
+      name: t('permissions'),
+      value: permissions?.length || 0,
       icon: Archive,
-      color: 'text-indigo-600',
-      bgColor: 'bg-indigo-50',
+      color: 'bg-orange-500',
+      lightBg: 'bg-orange-50 dark:bg-orange-900/20',
+      textColor: 'text-orange-600 dark:text-orange-400'
     },
-  ];
+    {
+      name: t('resources'),
+      value: resources?.length || 0,
+      icon: Archive,
+      color: 'bg-indigo-500',
+      lightBg: 'bg-indigo-50 dark:bg-indigo-900/20',
+      textColor: 'text-indigo-600 dark:text-indigo-400'
+    }
+  ]
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
+  const recentActivities = [
+    { id: 1, type: 'user', message: t('userCreated'), time: '5分钟前', status: 'success' },
+    { id: 2, type: 'role', message: t('roleUpdated'), time: '10分钟前', status: 'info' },
+    { id: 3, type: 'permission', message: t('permissionAssigned'), time: '15分钟前', status: 'success' },
+    { id: 4, type: 'resource', message: t('resourceAccessed'), time: '20分钟前', status: 'warning' },
+  ]
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">仪表盘</h1>
-          <p className="text-gray-600 mt-1">管理您的权限系统</p>
-        </div>
-        <div className="flex items-center space-x-2 text-sm text-gray-500">
-          <Activity className="w-4 h-4" />
-          <span>实时数据</span>
-        </div>
-      </div>
+    <div className="flex min-h-screen -my-8 -mx-6">
+      {/* 主内容区域 */}
+      <div className="flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col">
+        <div className="p-6 flex-1">
+          {/* 页面标题 */}
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">{t('dashboardTitle')}</h1>
+            <p className="text-slate-600 dark:text-slate-400">{t('dashboardSubtitle')}</p>
+          </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        {statCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div key={card.title} className="card">
-              <div className="flex items-center">
-                <div className={`p-3 rounded-lg ${card.bgColor}`}>
-                  <Icon className={`w-6 h-6 ${card.color}`} />
+          {/* 统计卡片 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+            {stats.map((stat) => {
+              const Icon = stat.icon
+              return (
+                <div key={stat.name} className="bg-white dark:bg-slate-800 rounded-lg p-6 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{stat.name}</p>
+                      <p className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-1">{stat.value}</p>
+                    </div>
+                    <div className={`p-3 rounded-lg ${stat.lightBg}`}>
+                      <Icon className={`w-6 h-6 ${stat.textColor}`} />
+                    </div>
+                  </div>
                 </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">{card.title}</p>
-                  <p className="text-2xl font-bold text-gray-900">{card.value}</p>
+              )
+            })}
+          </div>
+
+          {/* 内容区域 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 系统状态 */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center space-x-2">
+                  <Activity className="w-5 h-5" />
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('systemStatus')}</h2>
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                      <span className="text-slate-700 dark:text-slate-300">{t('authService')}</span>
+                    </div>
+                    <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
+                      {t('running')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                      <span className="text-slate-700 dark:text-slate-300">{t('database')}</span>
+                    </div>
+                    <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
+                      {t('healthy')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <AlertCircle className="w-5 h-5 text-yellow-500" />
+                      <span className="text-slate-700 dark:text-slate-300">{t('cache')}</span>
+                    </div>
+                    <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 text-xs rounded-full">
+                      {t('warning')}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          );
-        })}
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">快速操作</h3>
-            <TrendingUp className="w-5 h-5 text-gray-400" />
-          </div>
-          <div className="space-y-3">
-            <a href="/accounts" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-              <Users className="w-5 h-5 text-blue-600 mr-3" />
-              <div>
-                <p className="font-medium text-gray-900">管理账户</p>
-                <p className="text-sm text-gray-600">创建和管理用户账户</p>
+            {/* 最近活动 */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center space-x-2">
+                  <TrendingUp className="w-5 h-5" />
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('recentActivity')}</h2>
+                </div>
               </div>
-            </a>
-            <a href="/roles" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-              <UserCheck className="w-5 h-5 text-green-600 mr-3" />
-              <div>
-                <p className="font-medium text-gray-900">管理角色</p>
-                <p className="text-sm text-gray-600">配置角色和权限</p>
+              <div className="p-6">
+                <div className="space-y-4">
+                  {recentActivities.map((activity) => (
+                    <div key={activity.id} className="flex items-start space-x-3">
+                      <div className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
+                        activity.status === 'success' ? 'bg-green-500' :
+                        activity.status === 'info' ? 'bg-blue-500' :
+                        activity.status === 'warning' ? 'bg-yellow-500' : 'bg-gray-500'
+                      }`}></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-slate-900 dark:text-slate-100">{activity.message}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{activity.time}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </a>
-            <a href="/permissions" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-              <Key className="w-5 h-5 text-purple-600 mr-3" />
-              <div>
-                <p className="font-medium text-gray-900">管理权限</p>
-                <p className="text-sm text-gray-600">定义系统权限</p>
-              </div>
-            </a>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">系统状态</h3>
-            <Shield className="w-5 h-5 text-gray-400" />
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-3"></div>
-                <span className="text-sm font-medium text-green-900">API 服务</span>
-              </div>
-              <span className="text-sm text-green-600">正常运行</span>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-3"></div>
-                <span className="text-sm font-medium text-green-900">数据库</span>
-              </div>
-              <span className="text-sm text-green-600">连接正常</span>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
-                <span className="text-sm font-medium text-blue-900">权限引擎</span>
-              </div>
-              <span className="text-sm text-blue-600">活跃</span>
             </div>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }
