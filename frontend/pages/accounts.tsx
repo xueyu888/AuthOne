@@ -1,8 +1,112 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { getAccounts, createAccount, getRoles, getGroups, createRole, createGroup, Account, Role, Group } from "../api"
-import { Users, UserPlus, Settings, Shield, X } from "lucide-react"
+import { User, UserPlus, Settings, Badge, X, Users } from "lucide-react"
 import { useTranslation } from "../contexts/TranslationContext"
+
+interface TruncatedTextProps {
+  text: string
+  maxLength: number
+  className?: string
+}
+
+function TruncatedText({ text, maxLength, className = "" }: TruncatedTextProps) {
+  const needsTruncation = text.length > maxLength
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    const updateTooltipPosition = () => {
+      if (triggerRef.current && tooltipRef.current) {
+        const rect = triggerRef.current.getBoundingClientRect()
+        const tooltipRect = tooltipRef.current.getBoundingClientRect()
+        
+        tooltipRef.current.style.left = `${rect.left + rect.width / 2 - tooltipRect.width / 2}px`
+        tooltipRef.current.style.top = `${rect.top - tooltipRect.height - 8}px`
+      }
+    }
+    
+    const trigger = triggerRef.current
+    if (trigger) {
+      trigger.addEventListener('mouseenter', updateTooltipPosition)
+      trigger.addEventListener('mouseleave', updateTooltipPosition)
+      
+      return () => {
+        trigger.removeEventListener('mouseenter', updateTooltipPosition)
+        trigger.removeEventListener('mouseleave', updateTooltipPosition)
+      }
+    }
+  }, [])
+  
+  if (!needsTruncation) {
+    return <span className={className}>{text}</span>
+  }
+  
+  return (
+    <div ref={triggerRef} className="relative group inline-block w-full">
+      <span 
+        className={`${className} truncate block`} 
+        style={{ maxWidth: `${maxLength * 0.55}em` }}
+      >
+        {text}
+      </span>
+      {/* Tooltip - 使用 fixed 定位避免被容器截断 */}
+      <div ref={tooltipRef} className="fixed opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-[9999] px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-sm rounded-lg shadow-lg">
+        {text}
+        {/* Arrow */}
+        <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
+      </div>
+    </div>
+  )
+}
+
+// 专为标签使用的截断文本组件
+function TruncatedTag({ text, maxLength, className = "" }: TruncatedTextProps) {
+  const needsTruncation = text.length > maxLength
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    const updateTooltipPosition = () => {
+      if (triggerRef.current && tooltipRef.current) {
+        const rect = triggerRef.current.getBoundingClientRect()
+        const tooltipRect = tooltipRef.current.getBoundingClientRect()
+        
+        tooltipRef.current.style.left = `${rect.left + rect.width / 2 - tooltipRect.width / 2}px`
+        tooltipRef.current.style.top = `${rect.top - tooltipRect.height - 6}px`
+      }
+    }
+    
+    const trigger = triggerRef.current
+    if (trigger) {
+      trigger.addEventListener('mouseenter', updateTooltipPosition)
+      trigger.addEventListener('mouseleave', updateTooltipPosition)
+      
+      return () => {
+        trigger.removeEventListener('mouseenter', updateTooltipPosition)
+        trigger.removeEventListener('mouseleave', updateTooltipPosition)
+      }
+    }
+  }, [])
+  
+  if (!needsTruncation) {
+    return <>{text}</>
+  }
+  
+  return (
+    <div ref={triggerRef} className="relative group inline-block">
+      <span className={`${className} truncate`} style={{ maxWidth: `${maxLength * 0.5}em` }}>
+        {text}
+      </span>
+      {/* Tooltip for tag - fixed positioning */}
+      <div ref={tooltipRef} className="fixed opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-[9999] px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded shadow-lg">
+        {text}
+        {/* Arrow */}
+        <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-2 border-r-2 border-t-2 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
+      </div>
+    </div>
+  )
+}
 
 const TENANT_ID = "default_tenant"
 
@@ -81,9 +185,9 @@ export default function Accounts() {
   }
 
   const sidebarItems = [
-    { id: 'users' as const, label: t('users'), icon: Users, count: accounts?.length || 0 },
-    { id: 'roles' as const, label: t('roles'), icon: Shield, count: roles?.length || 0 },
-    { id: 'groups' as const, label: t('groups'), icon: Settings, count: groups?.length || 0 },
+    { id: 'users' as const, label: t('users'), icon: User, count: accounts?.length || 0 },
+    { id: 'roles' as const, label: t('roles'), icon: Badge, count: roles?.length || 0 },
+    { id: 'groups' as const, label: t('groups'), icon: Users, count: groups?.length || 0 },
   ]
 
   return (
@@ -98,10 +202,10 @@ export default function Accounts() {
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-left transition-all duration-200 ${
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-left transition-colors duration-150 ${
                     activeTab === item.id
                       ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent'
                   }`}
                 >
                   <div className="flex items-center space-x-3">
@@ -126,7 +230,7 @@ export default function Accounts() {
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Users className="w-5 h-5" />
+                  <User className="w-5 h-5" />
                   <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('userManagementTitle')}</h2>
                 </div>
                 <button
@@ -153,15 +257,19 @@ export default function Accounts() {
                   <tbody>
                   {accounts?.map((account) => (
                     <tr key={account.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">{account.username}</td>
-                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">{account.email}</td>
+                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
+                        <TruncatedText text={account.username} maxLength={15} />
+                      </td>
+                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">
+                        <TruncatedText text={account.email} maxLength={25} />
+                      </td>
                       <td className="py-3 px-6">
                         <div className="flex flex-wrap gap-1">
                           {account.roles.map((roleId) => {
                             const role = roles?.find(r => r.id === roleId)
                             return role ? (
                               <span key={roleId} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
-                                {role.name}
+                                <TruncatedTag text={role.name} maxLength={12} />
                               </span>
                             ) : null
                           })}
@@ -173,7 +281,7 @@ export default function Accounts() {
                             const group = groups?.find(g => g.id === groupId)
                             return group ? (
                               <span key={groupId} className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
-                                {group.name}
+                                <TruncatedTag text={group.name} maxLength={12} />
                               </span>
                             ) : null
                           })}
@@ -198,14 +306,14 @@ export default function Accounts() {
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Shield className="w-5 h-5" />
+                  <Badge className="w-5 h-5" />
                   <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('roleManagementTitle')}</h2>
                 </div>
                 <button
                   onClick={() => setShowCreateRole(true)}
                   className="flex items-center space-x-2 px-5 py-2.5 bg-slate-900 dark:bg-slate-700 text-white rounded-lg hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors font-medium shadow-sm"
                 >
-                  <Shield className="w-4 h-4" />
+                  <Badge className="w-4 h-4" />
                   <span>{t('createRole')}</span>
                 </button>
               </div>
@@ -224,8 +332,12 @@ export default function Accounts() {
                   <tbody>
                   {roles?.map((role) => (
                     <tr key={role.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">{role.name}</td>
-                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">{role.description}</td>
+                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
+                        <TruncatedText text={role.name} maxLength={20} />
+                      </td>
+                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">
+                        <TruncatedText text={role.description || ''} maxLength={30} />
+                      </td>
                       <td className="py-3 px-6">
                         <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full">
                           {role.permissions.length}{t('permissions')}
@@ -255,14 +367,14 @@ export default function Accounts() {
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Settings className="w-5 h-5" />
+                  <Users className="w-5 h-5" />
                   <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('groupManagementTitle')}</h2>
                 </div>
                 <button
                   onClick={() => setShowCreateGroup(true)}
                   className="flex items-center space-x-2 px-5 py-2.5 bg-slate-900 dark:bg-slate-700 text-white rounded-lg hover:bg-slate-800 dark:hover:bg-slate-600 transition-colors font-medium shadow-sm"
                 >
-                  <Settings className="w-4 h-4" />
+                  <Users className="w-4 h-4" />
                   <span>{t('createGroup')}</span>
                 </button>
               </div>
@@ -280,7 +392,9 @@ export default function Accounts() {
                   <tbody>
                   {groups?.map((group) => (
                     <tr key={group.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">{group.name}</td>
+                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
+                        <TruncatedText text={group.name} maxLength={20} />
+                      </td>
                       <td className="py-3 px-6">
                         <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs rounded-full">
                           {group.roles.length}{t('rolesCount')}

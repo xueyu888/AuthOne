@@ -49,3 +49,38 @@
     transform-origin: top;
   }
 }
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fade-in;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+/* 截断文本样式 */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tooltip 样式改进 */
+.tooltip-arrow {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.1));
+}
