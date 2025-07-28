@@ -35,6 +35,7 @@ export interface Group {
   name: string
   tenant_id: string
   roles: string[]
+  description?: string
 }
 
 export interface Resource {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getAccounts, createAccount, getRoles, getGroups, createRole, createGroup, Account, Role, Group } from "../api"
-import { User, UserPlus, Settings, Badge, X, Users } from "lucide-react"
+import { getAccounts, createAccount, getRoles, getGroups, createRole, createGroup, getPermissions, Account, Role, Group, Permission } from "../api"
+import { User, UserPlus, Settings, Badge, X, Users, Edit, Trash2 } from "lucide-react"
 import { useTranslation } from "../contexts/TranslationContext"
 
 interface TruncatedTextProps {
@@ -116,6 +116,9 @@ export default function Accounts() {
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [showCreateRole, setShowCreateRole] = useState(false)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [selectedRoles, setSelectedRoles] = useState<string[]>([])
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([])
   const queryClient = useQueryClient()
 
   const { data: accounts } = useQuery({
@@ -133,12 +136,19 @@ export default function Accounts() {
     queryFn: () => getGroups(TENANT_ID),
   })
 
+  const { data: permissions } = useQuery({
+    queryKey: ["permissions", TENANT_ID],
+    queryFn: () => getPermissions(TENANT_ID),
+  })
+
   const createAccountMutation = useMutation({
     mutationFn: ({ username, email }: { username: string; email: string }) => 
       createAccount(username, email, TENANT_ID),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["accounts", TENANT_ID] })
       setShowCreateUser(false)
+      setSelectedRoles([])
+      setSelectedGroups([])
     },
   })
 
@@ -148,6 +158,7 @@ export default function Accounts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["roles", TENANT_ID] })
       setShowCreateRole(false)
+      setSelectedPermissions([])
     },
   })
 
@@ -157,6 +168,7 @@ export default function Accounts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["groups", TENANT_ID] })
       setShowCreateGroup(false)
+      setSelectedPermissions([])
     },
   })
 
@@ -247,50 +259,113 @@ export default function Accounts() {
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('username')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('email')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('roles')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('groups')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('actions')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/5">{t('username')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/4">{t('email')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/5">{t('roles')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/5">{t('groups')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/8">{t('actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                   {accounts?.map((account) => (
                     <tr key={account.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
+                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
                         <TruncatedText text={account.username} maxLength={15} />
                       </td>
-                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">
+                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400 text-left">
                         <TruncatedText text={account.email} maxLength={25} />
                       </td>
-                      <td className="py-3 px-6">
-                        <div className="flex flex-wrap gap-1">
+                      <td className="py-3 px-6 text-center">
+                        <div className="flex flex-wrap gap-1 justify-center">
                           {account.roles.map((roleId) => {
                             const role = roles?.find(r => r.id === roleId)
                             return role ? (
-                              <span key={roleId} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
-                                <TruncatedTag text={role.name} maxLength={12} />
-                              </span>
+                              <div key={roleId} className="relative group">
+                                <div className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-xs rounded cursor-pointer hover:bg-blue-500/30 hover:border-blue-500/50 transition-all">
+                                  <TruncatedTag text={role.name} maxLength={12} />
+                                </div>
+                                {/* Quick reassign dropdown */}
+                                <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-32">
+                                  <div className="p-2">
+                                    <div className="text-xs text-slate-600 dark:text-slate-400 mb-1">{t('reassignRole')}</div>
+                                    {roles?.filter(r => r.id !== roleId && !account.roles.includes(r.id)).map(availableRole => (
+                                      <button
+                                        key={availableRole.id}
+                                        className="block w-full text-left px-2 py-1 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                                        onClick={() => {
+                                          // TODO: Implement role reassignment
+                                          console.log('Reassign role', roleId, 'to', availableRole.id, 'for account', account.id)
+                                        }}
+                                      >
+                                        {availableRole.name}
+                                      </button>
+                                    ))}
+                                    <button
+                                      className="block w-full text-left px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded mt-1"
+                                      onClick={() => {
+                                        // TODO: Implement role removal
+                                        console.log('Remove role', roleId, 'from account', account.id)
+                                      }}
+                                    >
+                                      {t('removeRole')}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             ) : null
                           })}
                         </div>
                       </td>
-                      <td className="py-3 px-6">
-                        <div className="flex flex-wrap gap-1">
+                      <td className="py-3 px-6 text-center">
+                        <div className="flex flex-wrap gap-1 justify-center">
                           {account.groups.map((groupId) => {
                             const group = groups?.find(g => g.id === groupId)
                             return group ? (
-                              <span key={groupId} className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
-                                <TruncatedTag text={group.name} maxLength={12} />
-                              </span>
+                              <div key={groupId} className="relative group">
+                                <div className="px-2 py-1 bg-green-500/20 border border-green-500/30 text-green-700 dark:text-green-300 text-xs rounded cursor-pointer hover:bg-green-500/30 hover:border-green-500/50 transition-all">
+                                  <TruncatedTag text={group.name} maxLength={12} />
+                                </div>
+                                {/* Quick reassign dropdown */}
+                                <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-32">
+                                  <div className="p-2">
+                                    <div className="text-xs text-slate-600 dark:text-slate-400 mb-1">{t('reassignGroup')}</div>
+                                    {groups?.filter(g => g.id !== groupId && !account.groups.includes(g.id)).map(availableGroup => (
+                                      <button
+                                        key={availableGroup.id}
+                                        className="block w-full text-left px-2 py-1 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                                        onClick={() => {
+                                          // TODO: Implement group reassignment
+                                          console.log('Reassign group', groupId, 'to', availableGroup.id, 'for account', account.id)
+                                        }}
+                                      >
+                                        {availableGroup.name}
+                                      </button>
+                                    ))}
+                                    <button
+                                      className="block w-full text-left px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded mt-1"
+                                      onClick={() => {
+                                        // TODO: Implement group removal
+                                        console.log('Remove group', groupId, 'from account', account.id)
+                                      }}
+                                    >
+                                      {t('removeGroup')}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             ) : null
                           })}
                         </div>
                       </td>
-                      <td className="py-3 px-6">
-                        <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
-                          {t('edit')}
-                        </button>
+                      <td className="py-3 px-6 text-center">
+                        <div className="flex gap-2 justify-center">
+                          <button className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button className="p-1 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -323,33 +398,56 @@ export default function Accounts() {
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('roleName')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('description')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('permissionCount')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('actions')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/4">{t('roleName')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-2/5">{t('description')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/5">{t('permissionCount')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/6">{t('actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                   {roles?.map((role) => (
                     <tr key={role.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
+                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
                         <TruncatedText text={role.name} maxLength={20} />
                       </td>
-                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400">
+                      <td className="py-3 px-6 text-slate-600 dark:text-slate-400 text-left">
                         <TruncatedText text={role.description || ''} maxLength={30} />
                       </td>
-                      <td className="py-3 px-6">
-                        <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full">
-                          {role.permissions.length}{t('permissions')}
-                        </span>
+                      <td className="py-3 px-6 text-center">
+                        <div className="relative group">
+                          <span className="inline-block px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full cursor-pointer hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors">
+                            {role.permissions.length}{t('permissions')}
+                          </span>
+                          {/* Expandable permission list */}
+                          {role.permissions.length > 0 && (
+                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-48 max-w-64">
+                              <div className="p-3">
+                                <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">{t('permissionList')}</div>
+                                <div className="max-h-32 overflow-y-auto space-y-1">
+                                  {role.permissions.map(permissionId => {
+                                    const permission = permissions?.find(p => p.id === permissionId)
+                                    return permission ? (
+                                      <div key={permissionId} className="text-xs text-slate-600 dark:text-slate-400 p-1 bg-slate-50 dark:bg-slate-700 rounded">
+                                        <div className="font-medium">{permission.name}</div>
+                                        {permission.description && (
+                                          <div className="text-slate-500 dark:text-slate-500 mt-0.5">{permission.description}</div>
+                                        )}
+                                      </div>
+                                    ) : null
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-3 px-6">
-                        <div className="flex space-x-2">
-                          <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
-                            {t('edit')}
+                      <td className="py-3 px-6 text-center">
+                        <div className="flex gap-2 justify-center">
+                          <button className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                            <Edit className="w-4 h-4" />
                           </button>
-                          <button className="text-sm text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300">
-                            {t('assignPermissions')}
+                          <button className="p-1 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -384,34 +482,60 @@ export default function Accounts() {
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('groupName')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('roleCount')}</th>
-                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300">{t('actions')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/4">{t('groupName')}</th>
+                      <th className="text-left py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-2/5">{t('description')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/5">{t('userCount')}</th>
+                      <th className="text-center py-3 px-6 font-medium text-slate-700 dark:text-slate-300 w-1/6">{t('actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                  {groups?.map((group) => (
-                    <tr key={group.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">
-                        <TruncatedText text={group.name} maxLength={20} />
-                      </td>
-                      <td className="py-3 px-6">
-                        <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs rounded-full">
-                          {group.roles.length}{t('rolesCount')}
-                        </span>
-                      </td>
-                      <td className="py-3 px-6">
-                        <div className="flex space-x-2">
-                          <button className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
-                            {t('edit')}
-                          </button>
-                          <button className="text-sm text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300">
-                            {t('assignRoles')}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {groups?.map((group) => {
+                    // Calculate user count based on accounts that have this group
+                    const userCount = accounts?.filter(account => account.groups.includes(group.id)).length || 0
+                    return (
+                      <tr key={group.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
+                        <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
+                          <TruncatedText text={group.name} maxLength={20} />
+                        </td>
+                        <td className="py-3 px-6 text-slate-600 dark:text-slate-400 text-left">
+                          <TruncatedText text={group.description || ''} maxLength={30} />
+                        </td>
+                        <td className="py-3 px-6 text-center">
+                          <div className="relative group">
+                            <span className="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs rounded-full cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors">
+                              {userCount}{t('usersCount')}
+                            </span>
+                            {/* Expandable user list */}
+                            {userCount > 0 && (
+                              <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-48 max-w-64">
+                                <div className="p-3">
+                                  <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">{t('userList')}</div>
+                                  <div className="max-h-32 overflow-y-auto space-y-1">
+                                    {accounts?.filter(account => account.groups.includes(group.id)).map(account => (
+                                      <div key={account.id} className="text-xs text-slate-600 dark:text-slate-400 p-1 bg-slate-50 dark:bg-slate-700 rounded">
+                                        <div className="font-medium">{account.username}</div>
+                                        <div className="text-slate-500 dark:text-slate-500 mt-0.5">{account.email}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-6 text-center">
+                          <div className="flex gap-2 justify-center">
+                            <button className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button className="p-1 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                   </tbody>
                 </table>
               </div>
@@ -451,6 +575,76 @@ export default function Accounts() {
                   required
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('roles')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const roleId = e.target.value
+                    if (roleId && !selectedRoles.includes(roleId)) {
+                      setSelectedRoles([...selectedRoles, roleId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectRole')}</option>
+                  {roles?.filter(role => !selectedRoles.includes(role.id)).map(role => (
+                    <option key={role.id} value={role.id}>{role.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedRoles.map(roleId => {
+                    const role = roles?.find(r => r.id === roleId)
+                    return role ? (
+                      <span key={roleId} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
+                        {role.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRoles(selectedRoles.filter(id => id !== roleId))}
+                          className="hover:text-blue-900 dark:hover:text-blue-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('groups')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const groupId = e.target.value
+                    if (groupId && !selectedGroups.includes(groupId)) {
+                      setSelectedGroups([...selectedGroups, groupId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectGroup')}</option>
+                  {groups?.filter(group => !selectedGroups.includes(group.id)).map(group => (
+                    <option key={group.id} value={group.id}>{group.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedGroups.map(groupId => {
+                    const group = groups?.find(g => g.id === groupId)
+                    return group ? (
+                      <span key={groupId} className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
+                        {group.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedGroups(selectedGroups.filter(id => id !== groupId))}
+                          className="hover:text-green-900 dark:hover:text-green-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
               </div>
               <div className="flex justify-end space-x-2 pt-4">
                 <button
@@ -502,6 +696,41 @@ export default function Accounts() {
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('permissions')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const permissionId = e.target.value
+                    if (permissionId && !selectedPermissions.includes(permissionId)) {
+                      setSelectedPermissions([...selectedPermissions, permissionId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectPermission')}</option>
+                  {permissions?.filter(permission => !selectedPermissions.includes(permission.id)).map(permission => (
+                    <option key={permission.id} value={permission.id}>{permission.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedPermissions.map(permissionId => {
+                    const permission = permissions?.find(p => p.id === permissionId)
+                    return permission ? (
+                      <span key={permissionId} className="inline-flex items-center gap-1 px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full">
+                        {permission.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPermissions(selectedPermissions.filter(id => id !== permissionId))}
+                          className="hover:text-orange-900 dark:hover:text-orange-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
+              </div>
               <div className="flex justify-end space-x-2 pt-4">
                 <button
                   type="button"
@@ -551,6 +780,41 @@ export default function Accounts() {
                   name="description"
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('permissions')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const permissionId = e.target.value
+                    if (permissionId && !selectedPermissions.includes(permissionId)) {
+                      setSelectedPermissions([...selectedPermissions, permissionId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectPermission')}</option>
+                  {permissions?.filter(permission => !selectedPermissions.includes(permission.id)).map(permission => (
+                    <option key={permission.id} value={permission.id}>{permission.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedPermissions.map(permissionId => {
+                    const permission = permissions?.find(p => p.id === permissionId)
+                    return permission ? (
+                      <span key={permissionId} className="inline-flex items-center gap-1 px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full">
+                        {permission.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPermissions(selectedPermissions.filter(id => id !== permissionId))}
+                          className="hover:text-orange-900 dark:hover:text-orange-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
               </div>
               <div className="flex justify-end space-x-2 pt-4">
                 <button
