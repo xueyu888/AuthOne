@@ -38,7 +38,7 @@ export default function Resources() {
       {/* 主内容区域 */}
       <div className="flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col">
         <div className="p-6 flex-1">
-          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 h-full flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -54,8 +54,8 @@ export default function Resources() {
                 </button>
               </div>
             </div>
-            <div className="border-t border-slate-200 dark:border-slate-700">
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <div className="border-t border-slate-200 dark:border-slate-700 flex-1 flex flex-col min-h-0">
+              <div className="overflow-x-auto overflow-y-auto flex-1">
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -67,7 +67,7 @@ export default function Resources() {
                   </thead>
                   <tbody>
                     {resources?.map((resource) => (
-                      <tr key={resource.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
+                      <tr key={resource.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
                         <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100">{resource.name}</td>
                         <td className="py-3 px-6 text-slate-600 dark:text-slate-400">
                           <span className="px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-xs rounded-full">

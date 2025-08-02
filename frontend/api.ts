@@ -65,9 +65,9 @@ export const getPermissions = async (tenantId?: string): Promise<Permission[]> =
   return response.data
 }
 
-export const createPermission = async (name: string, description?: string): Promise<Permission> => {
+export const createPermission = async (name: string, description?: string, tenantId?: string): Promise<Permission> => {
   const response = await apiClient.post("/permissions", null, {
-    params: { name, description: description || "" }
+    params: { name, description: description || "", tenant_id: tenantId }
   })
   return response.data
 }
@@ -98,6 +98,28 @@ export const createAccount = async (username: string, email: string, tenantId?: 
     params: { username, email, tenant_id: tenantId }
   })
   return response.data
+}
+
+export const updateAccountRolesAndGroups = async (accountId: string, newRoles: string[], newGroups: string[], currentRoles: string[] = [], currentGroups: string[] = []): Promise<void> => {
+  // 只添加新的角色（不在当前角色列表中的）
+  const rolesToAdd = newRoles.filter(roleId => !currentRoles.includes(roleId))
+  for (const roleId of rolesToAdd) {
+    try {
+      await assignRoleToAccount(accountId, roleId)
+    } catch (error) {
+      console.warn(`Failed to assign role ${roleId} to account ${accountId}:`, error)
+    }
+  }
+  
+  // 只添加新的用户组（不在当前组列表中的）
+  const groupsToAdd = newGroups.filter(groupId => !currentGroups.includes(groupId))
+  for (const groupId of groupsToAdd) {
+    try {
+      await assignGroupToAccount(accountId, groupId)
+    } catch (error) {
+      console.warn(`Failed to assign group ${groupId} to account ${accountId}:`, error)
+    }
+  }
 }
 
 // Group APIs

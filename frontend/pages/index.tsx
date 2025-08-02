@@ -67,7 +67,7 @@ export default function Dashboard() {
       textColor: 'text-orange-600 dark:text-orange-400'
     },
     {
-      name: t('resources'),
+      name: t('resourceManagement'),
       value: resources?.length || 0,
       icon: Archive,
       color: 'bg-indigo-500',
@@ -84,10 +84,10 @@ export default function Dashboard() {
   ]
 
   return (
-    <div className="flex min-h-screen -my-8 -mx-6">
+    <div className="flex h-screen -my-8 -mx-6">
       {/* 主内容区域 */}
-      <div className="flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col">
-        <div className="p-6 flex-1">
+      <div className="flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col overflow-hidden">
+        <div className="p-6 flex-1 overflow-auto">
           {/* 页面标题 */}
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">{t('dashboardTitle')}</h1>

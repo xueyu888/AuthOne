@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getAccounts, createAccount, getRoles, getGroups, createRole, createGroup, getPermissions, Account, Role, Group, Permission } from "../api"
+import { getAccounts, createAccount, updateAccountRolesAndGroups, getRoles, getGroups, createRole, createGroup, getPermissions, Account, Role, Group, Permission } from "../api"
 import { User, UserPlus, Settings, Badge, X, Users, Edit, Trash2 } from "lucide-react"
 import { useTranslation } from "../contexts/TranslationContext"
 
@@ -60,53 +60,6 @@ function TruncatedText({ text, maxLength, className = "" }: TruncatedTextProps) 
   )
 }
 
-// 专为标签使用的截断文本组件
-function TruncatedTag({ text, maxLength, className = "" }: TruncatedTextProps) {
-  const needsTruncation = text.length > maxLength
-  const triggerRef = useRef<HTMLDivElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-  
-  useEffect(() => {
-    const updateTooltipPosition = () => {
-      if (triggerRef.current && tooltipRef.current) {
-        const rect = triggerRef.current.getBoundingClientRect()
-        const tooltipRect = tooltipRef.current.getBoundingClientRect()
-        
-        tooltipRef.current.style.left = `${rect.left + rect.width / 2 - tooltipRect.width / 2}px`
-        tooltipRef.current.style.top = `${rect.top - tooltipRect.height - 6}px`
-      }
-    }
-    
-    const trigger = triggerRef.current
-    if (trigger) {
-      trigger.addEventListener('mouseenter', updateTooltipPosition)
-      trigger.addEventListener('mouseleave', updateTooltipPosition)
-      
-      return () => {
-        trigger.removeEventListener('mouseenter', updateTooltipPosition)
-        trigger.removeEventListener('mouseleave', updateTooltipPosition)
-      }
-    }
-  }, [])
-  
-  if (!needsTruncation) {
-    return <>{text}</>
-  }
-  
-  return (
-    <div ref={triggerRef} className="relative group inline-block">
-      <span className={`${className} truncate`} style={{ maxWidth: `${maxLength * 0.5}em` }}>
-        {text}
-      </span>
-      {/* Tooltip for tag - fixed positioning */}
-      <div ref={tooltipRef} className="fixed opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-[9999] px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded shadow-lg">
-        {text}
-        {/* Arrow */}
-        <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-2 border-r-2 border-t-2 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
-      </div>
-    </div>
-  )
-}
 
 const TENANT_ID = "default_tenant"
 
@@ -116,6 +69,8 @@ export default function Accounts() {
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [showCreateRole, setShowCreateRole] = useState(false)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [showEditUser, setShowEditUser] = useState(false)
+  const [editingUser, setEditingUser] = useState<Account | null>(null)
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([])
@@ -172,6 +127,18 @@ export default function Accounts() {
     },
   })
 
+  const updateAccountMutation = useMutation({
+    mutationFn: ({ accountId, roles, groups, currentRoles, currentGroups }: { accountId: string; roles: string[]; groups: string[]; currentRoles: string[]; currentGroups: string[] }) => 
+      updateAccountRolesAndGroups(accountId, roles, groups, currentRoles, currentGroups),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["accounts", TENANT_ID] })
+      setShowEditUser(false)
+      setEditingUser(null)
+      setSelectedRoles([])
+      setSelectedGroups([])
+    },
+  })
+
   const handleCreateUser = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const formData = new FormData(event.currentTarget)
@@ -194,6 +161,26 @@ export default function Accounts() {
     const name = formData.get("name") as string
     const description = formData.get("description") as string
     createGroupMutation.mutate({ name, description })
+  }
+
+  const handleEditUser = (user: Account) => {
+    setEditingUser(user)
+    setSelectedRoles(user.roles)
+    setSelectedGroups(user.groups)
+    setShowEditUser(true)
+  }
+
+  const handleUpdateUser = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingUser) return
+    
+    updateAccountMutation.mutate({
+      accountId: editingUser.id,
+      roles: selectedRoles,
+      groups: selectedGroups,
+      currentRoles: editingUser.roles,
+      currentGroups: editingUser.groups
+    })
   }
 
   const sidebarItems = [
@@ -238,7 +225,7 @@ export default function Accounts() {
       <div className="flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col">
         <div className="p-6 flex-1">
           {activeTab === 'users' && (
-            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 h-full flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -254,8 +241,8 @@ export default function Accounts() {
                 </button>
               </div>
             </div>
-            <div className="border-t border-slate-200 dark:border-slate-700">
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <div className="border-t border-slate-200 dark:border-slate-700 flex-1 flex flex-col min-h-0">
+              <div className="overflow-x-auto overflow-y-auto flex-1">
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -268,7 +255,7 @@ export default function Accounts() {
                   </thead>
                   <tbody>
                   {accounts?.map((account) => (
-                    <tr key={account.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
+                    <tr key={account.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
                       <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
                         <TruncatedText text={account.username} maxLength={15} />
                       </td>
@@ -280,40 +267,16 @@ export default function Accounts() {
                           {account.roles.map((roleId) => {
                             const role = roles?.find(r => r.id === roleId)
                             return role ? (
-                              <div key={roleId} className="relative group">
-                                <div className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-xs rounded cursor-pointer hover:bg-blue-500/30 hover:border-blue-500/50 transition-all">
-                                  <TruncatedTag text={role.name} maxLength={12} />
-                                </div>
-                                {/* Quick reassign dropdown */}
-                                <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-32">
-                                  <div className="p-2">
-                                    <div className="text-xs text-slate-600 dark:text-slate-400 mb-1">{t('reassignRole')}</div>
-                                    {roles?.filter(r => r.id !== roleId && !account.roles.includes(r.id)).map(availableRole => (
-                                      <button
-                                        key={availableRole.id}
-                                        className="block w-full text-left px-2 py-1 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-                                        onClick={() => {
-                                          // TODO: Implement role reassignment
-                                          console.log('Reassign role', roleId, 'to', availableRole.id, 'for account', account.id)
-                                        }}
-                                      >
-                                        {availableRole.name}
-                                      </button>
-                                    ))}
-                                    <button
-                                      className="block w-full text-left px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded mt-1"
-                                      onClick={() => {
-                                        // TODO: Implement role removal
-                                        console.log('Remove role', roleId, 'from account', account.id)
-                                      }}
-                                    >
-                                      {t('removeRole')}
-                                    </button>
-                                  </div>
-                                </div>
+                              <div key={roleId} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
+                                {role.name}
                               </div>
                             ) : null
                           })}
+                          {account.roles.length === 0 && (
+                            <div className="text-slate-500 dark:text-slate-400 text-xs">
+                              {t('unassigned')}
+                            </div>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-6 text-center">
@@ -321,45 +284,24 @@ export default function Accounts() {
                           {account.groups.map((groupId) => {
                             const group = groups?.find(g => g.id === groupId)
                             return group ? (
-                              <div key={groupId} className="relative group">
-                                <div className="px-2 py-1 bg-green-500/20 border border-green-500/30 text-green-700 dark:text-green-300 text-xs rounded cursor-pointer hover:bg-green-500/30 hover:border-green-500/50 transition-all">
-                                  <TruncatedTag text={group.name} maxLength={12} />
-                                </div>
-                                {/* Quick reassign dropdown */}
-                                <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-10 min-w-32">
-                                  <div className="p-2">
-                                    <div className="text-xs text-slate-600 dark:text-slate-400 mb-1">{t('reassignGroup')}</div>
-                                    {groups?.filter(g => g.id !== groupId && !account.groups.includes(g.id)).map(availableGroup => (
-                                      <button
-                                        key={availableGroup.id}
-                                        className="block w-full text-left px-2 py-1 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-                                        onClick={() => {
-                                          // TODO: Implement group reassignment
-                                          console.log('Reassign group', groupId, 'to', availableGroup.id, 'for account', account.id)
-                                        }}
-                                      >
-                                        {availableGroup.name}
-                                      </button>
-                                    ))}
-                                    <button
-                                      className="block w-full text-left px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded mt-1"
-                                      onClick={() => {
-                                        // TODO: Implement group removal
-                                        console.log('Remove group', groupId, 'from account', account.id)
-                                      }}
-                                    >
-                                      {t('removeGroup')}
-                                    </button>
-                                  </div>
-                                </div>
+                              <div key={groupId} className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
+                                {group.name}
                               </div>
                             ) : null
                           })}
+                          {account.groups.length === 0 && (
+                            <div className="text-slate-500 dark:text-slate-400 text-xs">
+                              {t('unassigned')}
+                            </div>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-6 text-center">
                         <div className="flex gap-2 justify-center">
-                          <button className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                          <button 
+                            onClick={() => handleEditUser(account)}
+                            className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
+                          >
                             <Edit className="w-4 h-4" />
                           </button>
                           <button className="p-1 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
@@ -377,7 +319,7 @@ export default function Accounts() {
         )}
 
           {activeTab === 'roles' && (
-            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 h-full flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -393,8 +335,8 @@ export default function Accounts() {
                 </button>
               </div>
             </div>
-            <div className="border-t border-slate-200 dark:border-slate-700">
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <div className="border-t border-slate-200 dark:border-slate-700 flex-1 flex flex-col min-h-0">
+              <div className="overflow-x-auto overflow-y-auto flex-1">
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -406,7 +348,7 @@ export default function Accounts() {
                   </thead>
                   <tbody>
                   {roles?.map((role) => (
-                    <tr key={role.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
+                    <tr key={role.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
                       <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
                         <TruncatedText text={role.name} maxLength={20} />
                       </td>
@@ -461,7 +403,7 @@ export default function Accounts() {
         )}
 
           {activeTab === 'groups' && (
-            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+            <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 h-full flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -477,8 +419,8 @@ export default function Accounts() {
                 </button>
               </div>
             </div>
-            <div className="border-t border-slate-200 dark:border-slate-700">
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <div className="border-t border-slate-200 dark:border-slate-700 flex-1 flex flex-col min-h-0">
+              <div className="overflow-x-auto overflow-y-auto flex-1">
                 <table className="w-full">
                   <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -493,7 +435,7 @@ export default function Accounts() {
                     // Calculate user count based on accounts that have this group
                     const userCount = accounts?.filter(account => account.groups.includes(group.id)).length || 0
                     return (
-                      <tr key={group.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750">
+                      <tr key={group.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50">
                         <td className="py-3 px-6 font-medium text-slate-900 dark:text-slate-100 text-left">
                           <TruncatedText text={group.name} maxLength={20} />
                         </td>
@@ -830,6 +772,140 @@ export default function Accounts() {
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {createGroupMutation.isPending ? t('creating') : t('create')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      
+      {/* 编辑用户弹窗 */}
+      {showEditUser && editingUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{t('editUser')}</h3>
+              <button
+                onClick={() => {
+                  setShowEditUser(false)
+                  setEditingUser(null)
+                  setSelectedRoles([])
+                  setSelectedGroups([])
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleUpdateUser} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('username')}</label>
+                <input
+                  name="username"
+                  defaultValue={editingUser.username}
+                  readOnly
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-slate-100 dark:bg-slate-600 text-slate-900 dark:text-slate-100 cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('email')}</label>
+                <input
+                  name="email"
+                  type="email"
+                  defaultValue={editingUser.email}
+                  readOnly
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-slate-100 dark:bg-slate-600 text-slate-900 dark:text-slate-100 cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('roles')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const roleId = e.target.value
+                    if (roleId && !selectedRoles.includes(roleId)) {
+                      setSelectedRoles([...selectedRoles, roleId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectRole')}</option>
+                  {roles?.filter(role => !selectedRoles.includes(role.id)).map(role => (
+                    <option key={role.id} value={role.id}>{role.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedRoles.map(roleId => {
+                    const role = roles?.find(r => r.id === roleId)
+                    return role ? (
+                      <span key={roleId} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
+                        {role.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRoles(selectedRoles.filter(id => id !== roleId))}
+                          className="hover:text-blue-900 dark:hover:text-blue-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t('groups')}</label>
+                <select 
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const groupId = e.target.value
+                    if (groupId && !selectedGroups.includes(groupId)) {
+                      setSelectedGroups([...selectedGroups, groupId])
+                    }
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('selectGroup')}</option>
+                  {groups?.filter(group => !selectedGroups.includes(group.id)).map(group => (
+                    <option key={group.id} value={group.id}>{group.name}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedGroups.map(groupId => {
+                    const group = groups?.find(g => g.id === groupId)
+                    return group ? (
+                      <span key={groupId} className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded-full">
+                        {group.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedGroups(selectedGroups.filter(id => id !== groupId))}
+                          className="hover:text-green-900 dark:hover:text-green-100"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ) : null
+                  })}
+                </div>
+              </div>
+              <div className="flex justify-end space-x-2 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditUser(false)
+                    setEditingUser(null)
+                    setSelectedRoles([])
+                    setSelectedGroups([])
+                  }}
+                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateAccountMutation.isPending}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {updateAccountMutation.isPending ? t('updating') : t('update')}
                 </button>
               </div>
             </form>
