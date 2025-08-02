@@ -321,7 +321,7 @@ export default function Layout({ children }: LayoutProps) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
+    <div className="h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
       {/* 顶部导航栏 - 固定在页面顶部 */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 shadow-sm transition-colors duration-300">
         <div className="max-w-full px-6">
@@ -583,8 +583,8 @@ export default function Layout({ children }: LayoutProps) {
       </nav>
 
       {/* 主内容区域 - 添加顶部padding以避免被固定导航栏遮挡 */}
-      <main className="pt-16">
-        <div className="py-8 px-6">
+      <main className="pt-16 h-full overflow-hidden">
+        <div className="py-8 px-6 h-full overflow-hidden">
           {children}
         </div>
       </main>
@@ -600,7 +600,7 @@ export default function Layout({ children }: LayoutProps) {
           
           {/* 弹窗容器 */}
           <div className="fixed inset-0 z-50 overflow-y-auto">
-            <div className="flex min-h-full items-center justify-center p-4">
+            <div className="flex h-full items-center justify-center p-4">
               <div 
                 className="relative bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 dark:border-slate-700/20 w-full max-w-md transform transition-all duration-200 ease-out"
                 onClick={(e) => e.stopPropagation()}
@@ -741,7 +741,7 @@ export default function Layout({ children }: LayoutProps) {
           
           {/* 弹窗容器 */}
           <div className="fixed inset-0 z-50 overflow-y-auto">
-            <div className="flex min-h-full items-center justify-center p-4">
+            <div className="flex h-full items-center justify-center p-4">
               <div 
                 className="relative bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 dark:border-slate-700/20 w-full max-w-md transform transition-all duration-200 ease-out"
                 onClick={(e) => e.stopPropagation()}
