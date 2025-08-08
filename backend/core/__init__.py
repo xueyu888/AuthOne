@@ -1,10 +1,11 @@
-"""core 子包：授权引擎。
+"""Core package initialisation.
 
-该子包对外暴露 ``AuthEngine``，用于管理权限模型和执行权限校验。
+This package exposes the ``AuthEngine`` which wraps the Casbin
+engine.  See ``backend.core.auth_engine`` for details.
 """
 
 from __future__ import annotations
 
 from .auth_engine import AuthEngine
 
-__all__: list[str] = ["AuthEngine"]
+__all__ = ["AuthEngine"]

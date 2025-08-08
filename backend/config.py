@@ -1,16 +1,12 @@
-"""配置模块。
+"""Configuration module for AuthOne.
 
-此模块定义了一些配置相关的数据结构和帮助函数，用于管理数据库
-连接、Casbin 模型路径等可配置项。通过外部注入 ``Settings`` 实例，可以
-方便地替换数据库或调整日志级别等运行参数。
-
-示例::
-
-    from AuthOne.config import Settings
-    settings = Settings(db_url="postgresql://user:pass@host:5432/db")
-    print(settings.db_url)
+This module defines a simple ``Settings`` dataclass containing
+configuration parameters for the application.  The defaults provided
+here are suitable for development but should be overridden via
+environment variables or other configuration mechanisms in
+production.
 """
-# backend/config.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,31 +14,35 @@ from dataclasses import dataclass
 __all__ = ["Settings"]
 
 
-@dataclass(slots=True)
+@dataclass
 class Settings:
-    """应用配置。
+    """Application configuration.
 
-    :param db_url: 数据库连接字符串，使用 SQLAlchemy 或 psycopg 标准格式。
-    :param log_level: 日志级别，默认为 ``INFO``。
-    :param casbin_model_path: Casbin 模型配置文件路径，用于初始化 Enforcer。
-    :param casbin_policy_table: Casbin 策略表名称，在数据库中存储策略行。
+    :param db_url: Database connection string in SQLAlchemy URL format.
+    :param log_level: Logging level string (e.g. ``INFO``).
+    :param casbin_model_path: Path to the Casbin model configuration file.
+    :param casbin_policy_table: Table name for storing Casbin policy rules
+        (used by the SQL adapter).  This default matches our migration.
     """
 
-    # 默认异步数据库 URL。使用 asyncpg 作为 PostgreSQL 驱动。请根据实际
-    # 环境调整用户名、密码和数据库名。如果需要使用同步驱动，可在启动
-    # 时通过环境变量或其他方式覆盖此字段。
-    # db_url_sync: str = "postgresql://postgres:123@199.199.199.8:5432/authone"
-    db_url: str = "postgresql+asyncpg://postgres:123@199.199.199.8:5432/authone"
+    db_url: str = (
+        "postgresql+asyncpg://postgres:123@199.199.199.8:5432/authone"
+    )
     log_level: str = "INFO"
     casbin_model_path: str = "rbac_model.conf"
     casbin_policy_table: str = "casbin_rules"
-    # 未来可以添加更多配置项，如 Redis、缓存过期时间等
 
     def override(self, **kwargs: object) -> "Settings":
-        """复制当前配置并按需覆盖字段。
+        """Return a new Settings instance overriding specified fields.
 
-        该方法返回新的 ``Settings`` 实例，不修改原对象。
+        This method creates a new ``Settings`` by copying this instance's
+        fields using ``asdict`` (which supports dataclasses with slots)
+        and applying any keyword overrides.  It avoids relying on
+        ``__dict__`` so that ``Settings`` can be defined with or without
+        ``slots=True``.
         """
-        data = self.__dict__.copy()
+        from dataclasses import asdict
+
+        data = asdict(self)
         data.update(kwargs)
-        return Settings(**data)  # type: ignore[arg-type]
+        return Settings(**data)

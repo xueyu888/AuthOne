@@ -1,10 +1,10 @@
-"""版本信息模块。
+"""Version information for AuthOne.
 
-此模块定义包的版本号。修改版本号请遵循语义化版本约定。
+Modify the version number here following semantic versioning.
 """
 
 from __future__ import annotations
 
 __all__ = ["__version__"]
 
-__version__: str = "0.1.0"
+__version__: str = "0.2.0"
