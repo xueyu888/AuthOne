@@ -1,4 +1,20 @@
 @import "tailwindcss";
+@config "../tailwind.config.js";
+
+/* 确保页面不会有滚动条 */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+#__next {
+  height: 100%;
+}
+
+.dark {
+  color-scheme: dark;
+}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 @layer components {
   .btn-primary {
@@ -16,4 +32,65 @@
   .card {
     @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
   }
+}
+
+@keyframes expandDown {
+  0% {
+    opacity: 0;
+    transform: scaleY(0);
+    transform-origin: top;
+  }
+  100% {
+    opacity: 1;
+    transform: scaleY(1);
+    transform-origin: top;
+  }
+}
+
+@keyframes collapseUp {
+  0% {
+    opacity: 1;
+    transform: scaleY(1);
+    transform-origin: top;
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0);
+    transform-origin: top;
+  }
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fade-in;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+/* 截断文本样式 */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tooltip 样式改进 */
+.tooltip-arrow {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.1));
 }
