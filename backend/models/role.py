@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import list, Optional
 
 __all__ = ["Role"]
 
@@ -18,13 +17,13 @@ class Role:
     """角色数据类。"""
 
     _id: str
-    _tenant_id: Optional[str]
+    _tenant_id: str|None
     _name: str
     _description: str
     _permissions: list[str] = field(default_factory=list)
 
     @classmethod
-    def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Role":
+    def create(cls, tenant_id: str|None, name: str, description: str) -> "Role":
         if not name:
             raise ValueError("role name must not be empty")
         return cls(
@@ -39,7 +38,7 @@ class Role:
         return self._id
 
     @property
-    def tenant_id(self) -> Optional[str]:
+    def tenant_id(self) -> str|None:
         return self._tenant_id
 
     @property

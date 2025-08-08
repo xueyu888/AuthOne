@@ -5,6 +5,6 @@
 
 from __future__ import annotations
 
-from .engine import AuthEngine
+from .auth_engine import AuthEngine
 
 __all__: list[str] = ["AuthEngine"]

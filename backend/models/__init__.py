@@ -5,6 +5,7 @@
 
 使用 ``from AuthOne.models import Permission`` 导入实体类。
 """
+# backend/models/__init__.py
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from .role import Role
 from .group import Group
 from .account import Account
 from .resource import Resource
-from .pydantic_models import AccessCheckRequest, AccessCheckResponse
+from .schemas import AccessCheckRequest, AccessCheckResponse
 
 __all__: list[str] = [
     "Permission",

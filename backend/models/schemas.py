@@ -7,14 +7,14 @@
 
 所有属性均设为私有并通过只读属性暴露，以防止外部修改内部状态。
 """
+# backend/models.py
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import list, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "Permission",
@@ -81,13 +81,13 @@ class Role:
     """
 
     _id: str
-    _tenant_id: Optional[str]
+    _tenant_id: str|None
     _name: str
     _description: str
     _permissions: list[str] = field(default_factory=list)
 
     @classmethod
-    def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Role":
+    def create(cls, tenant_id: str|None, name: str, description: str) -> "Role":
         """创建一个角色。
 
         :param tenant_id: 角色所属的租户 ID，可为空表示全局角色
@@ -111,7 +111,7 @@ class Role:
         return self._id
 
     @property
-    def tenant_id(self) -> Optional[str]:
+    def tenant_id(self) -> str|None:
         """角色所属的租户 ID。"""
         return self._tenant_id
 
@@ -147,13 +147,13 @@ class Group:
     """
 
     _id: str
-    _tenant_id: Optional[str]
+    _tenant_id: str|None
     _name: str
     _description: str
     _roles: list[str] = field(default_factory=list)
 
     @classmethod
-    def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Group":
+    def create(cls, tenant_id: str|None, name: str, description: str) -> "Group":
         """创建一个用户组。
 
         :param tenant_id: 租户 ID，可为空
@@ -176,7 +176,7 @@ class Group:
         return self._id
 
     @property
-    def tenant_id(self) -> Optional[str]:
+    def tenant_id(self) -> str|None:
         return self._tenant_id
 
     @property
@@ -207,12 +207,12 @@ class Account:
     _id: str
     _username: str
     _email: str
-    _tenant_id: Optional[str]
+    _tenant_id: str|None
     _roles: list[str] = field(default_factory=list)
     _groups: list[str] = field(default_factory=list)
 
     @classmethod
-    def create(cls, username: str, email: str, tenant_id: Optional[str] = None) -> "Account":
+    def create(cls, username: str, email: str, tenant_id: str|None = None) -> "Account":
         """创建一个用户账户。
 
         :param username: 用户名，不能为空
@@ -245,7 +245,7 @@ class Account:
         return self._email
 
     @property
-    def tenant_id(self) -> Optional[str]:
+    def tenant_id(self) -> str|None:
         return self._tenant_id
 
     @property
@@ -275,9 +275,10 @@ class AccessCheckRequest(BaseModel):
     account_id: str = Field(..., description="用户账户 ID")
     resource: str = Field(..., description="资源名称，如前端组件或后端模块")
     action: str = Field(..., description="操作名称，如 create/read/update/delete")
-    tenant_id: Optional[str] = Field(None, description="请求所属租户 ID，可为空")
+    tenant_id: str|None = Field(None, description="请求所属租户 ID，可为空")
 
-    @validator("account_id", "resource", "action")
+    @field_validator("account_id", "resource", "action")
+    @classmethod
     def _not_empty(cls, v: str) -> str:
         if not v:
             raise ValueError("must not be empty")
@@ -291,4 +292,4 @@ class AccessCheckResponse(BaseModel):
     """
 
     allowed: bool = Field(..., description="是否允许访问")
-    reason: Optional[str] = Field(None, description="拒绝原因")
+    reason: str|None = Field(None, description="拒绝原因")

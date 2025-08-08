@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 __all__ = ["Group"]
 
@@ -16,13 +15,13 @@ __all__ = ["Group"]
 @dataclass(slots=True)
 class Group:
     _id: str
-    _tenant_id: Optional[str]
+    _tenant_id: str|None
     _name: str
     _description: str
     _roles: list[str]
 
     @classmethod
-    def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Group":
+    def create(cls, tenant_id: str|None, name: str, description: str) -> "Group":
         if not name:
             raise ValueError("group name must not be empty")
         return cls(
@@ -38,7 +37,7 @@ class Group:
         return self._id
 
     @property
-    def tenant_id(self) -> Optional[str]:
+    def tenant_id(self) -> str|None:
         return self._tenant_id
 
     @property

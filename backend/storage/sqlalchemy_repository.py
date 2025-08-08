@@ -1,251 +1,284 @@
 # backend/storage/sqlalchemy_repository.py
 from __future__ import annotations
-import uuid
-from typing import list, optional
-from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID, uuid4
+from sqlalchemy import select, insert, delete
 from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from ..db import AccountModel, GroupModel, PermissionModel, ResourceModel, RoleModel
-from ..models import Account, Group, Permission, Resource, Role
-from .interface import AccountRepository, GroupRepository, PermissionRepository, ResourceRepository, RoleRepository
+from ..models import Account, Group, Role, Permission, Resource
+from ..db import (
+    AccountModel, GroupModel, RoleModel, PermissionModel, ResourceModel,
+    AuditLogModel,
+    role_permissions, group_roles, user_roles, user_groups,
+)
+from ..storage.interface import (
+    PermissionRepository, RoleRepository, GroupRepository, AccountRepository, ResourceRepository
+)
 
-__all__ = [
-    "SQLAlchemyPermissionRepository", "SQLAlchemyRoleRepository", "SQLAlchemyGroupRepository",
-    "SQLAlchemyAccountRepository", "SQLAlchemyResourceRepository", "AuditLogRepository",
-]
+# ---------- 工具：模型 ↔ 领域对象 ----------
 
-class _BaseRepo:
+def _to_permission(m: PermissionModel) -> Permission:
+    return Permission(_id=str(m.id), _name=m.name, _description=m.description or "")
+
+def _to_role(m: RoleModel) -> Role:
+    perm_ids = [str(p.id) for p in m.permissions] if hasattr(m, "permissions") and m.permissions else []
+    return Role(_id=str(m.id), _tenant_id=m.tenant_id, _name=m.name, _description=m.description or "", _permissions=perm_ids)
+
+def _to_group(m: GroupModel) -> Group:
+    role_ids = [str(r.id) for r in m.roles] if hasattr(m, "roles") and m.roles else []
+    return Group(_id=str(m.id), _tenant_id=m.tenant_id, _name=m.name, _description=m.description or "", _roles=role_ids)
+
+def _to_account(m: AccountModel) -> Account:
+    role_ids = [str(r.id) for r in m.roles] if hasattr(m, "roles") and m.roles else []
+    group_ids = [str(g.id) for g in m.groups] if hasattr(m, "groups") and m.groups else []
+    return Account(_id=str(m.id), _username=m.username, _email=m.email, _tenant_id=m.tenant_id, _roles=role_ids, _groups=group_ids)
+
+def _to_resource(m: ResourceModel) -> Resource:
+    md = m.resource_metadata or {}
+    return Resource(_id=str(m.id), _type=m.type, _name=m.name, _tenant_id=m.tenant_id, _owner_id=(str(m.owner_id) if m.owner_id else None), _resource_metadata=md)
+
+# ---------- 仓库实现 ----------
+
+class SQLAlchemyPermissionRepository(PermissionRepository):
     def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+        self.s = session
 
-# ---- Permission ----
-class SQLAlchemyPermissionRepository(_BaseRepo, PermissionRepository):
     async def add(self, permission: Permission) -> None:
-        self._session.add(PermissionModel(id=uuid.UUID(permission.id), name=permission.name, description=permission.description))
-        await self._session.commit()
+        async with self.s.begin():
+            stmt = (
+                pg_insert(PermissionModel)
+                .values(
+                    id = UUID(permission.id),
+                    name = permission.name,
+                    description = permission.description,
+                )
+                .on_conflict_do_nothing(index_elements=[PermissionModel.name])
+                .returning(PermissionModel.id) #type: ignore[no-any-return]
+            )
 
-    async def get(self, permission_id: str) -> optional[Permission]:
-        obj = await self._session.get(PermissionModel, uuid.UUID(permission_id))
-        return None if not obj else Permission(_id=str(obj.id), _name=obj.name, _description=obj.description or "")
+        rid = await self.s.scalar(stmt) #type: ignore[no-any-return]
+        if rid is None:
+            raise ValueError(f"Permission with name '{permission.name}' already exists.")
+        
+        permission._id = str(rid)  # 更新领域对象的 ID
 
-    async def list(self, tenant_id: optional[str] = None) -> list[Permission]:
-        res = await self._session.execute(select(PermissionModel))
-        return [Permission(_id=str(o.id), _name=o.name, _description=o.description or "") for o in res.scalars().all()]
+    async def get(self, permission_id: str) -> Permission | None:
+        m = await self.s.get(PermissionModel, UUID(permission_id))
+        return _to_permission(m) if m else None
+
+    async def list(self, tenant_id: str | None = None) -> list[Permission]:
+        # 权限不分租户
+        res = await self.s.execute(select(PermissionModel))
+        return [_to_permission(m) for m in res.scalars().all()]
 
     async def delete(self, permission_id: str) -> bool:
-        obj = await self._session.get(PermissionModel, uuid.UUID(permission_id))
-        if not obj:
-            return False
-        await self._session.delete(obj)
-        await self._session.commit()
-        return True
+        res = await self.s.execute(delete(PermissionModel).where(PermissionModel.id == UUID(permission_id)))
+        await self.s.commit()
+        return res.rowcount > 0
 
-# ---- Role ----
-class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
+class SQLAlchemyRoleRepository(RoleRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self.s = session
+
     async def add(self, role: Role) -> None:
-        self._session.add(RoleModel(id=uuid.UUID(role.id), tenant_id=role.tenant_id, name=role.name, description=role.description))
-        await self._session.commit()
+        obj = RoleModel(id=UUID(role.id), tenant_id=role.tenant_id, name=role.name, description=role.description)
+        self.s.add(obj)
+        await self.s.commit()
 
-    async def get(self, role_id: str) -> optional[Role]:
-        stmt = select(RoleModel).where(RoleModel.id == uuid.UUID(role_id)).options(selectinload(RoleModel.permissions))
-        obj = (await self._session.execute(stmt)).scalars().first()
-        if not obj:
-            return None
-        return Role(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name, _description=obj.description or "",
-                    _permissions=[str(p.id) for p in obj.permissions])
+    async def get(self, role_id: str) -> Role | None:
+        res = await self.s.execute(
+            select(RoleModel).options(selectinload(RoleModel.permissions)).where(RoleModel.id == UUID(role_id))
+        )
+        m = res.scalars().first()
+        return _to_role(m) if m else None
 
-    async def list(self, tenant_id: optional[str] = None) -> list[Role]:
+    async def list(self, tenant_id: str | None = None) -> list[Role]:
         stmt = select(RoleModel).options(selectinload(RoleModel.permissions))
         if tenant_id is not None:
             stmt = stmt.where(RoleModel.tenant_id == tenant_id)
-        res = await self._session.execute(stmt)
-        out: list[Role] = []
-        for obj in res.scalars().all():
-            out.append(Role(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
-                            _description=obj.description or "", _permissions=[str(p.id) for p in obj.permissions]))
-        return out
+        res = await self.s.execute(stmt)
+        return [_to_role(m) for m in res.scalars().all()]
 
     async def delete(self, role_id: str) -> bool:
-        obj = await self._session.get(RoleModel, uuid.UUID(role_id))
-        if not obj:
-            return False
-        await self._session.delete(obj)
-        await self._session.commit()
-        return True
+        res = await self.s.execute(delete(RoleModel).where(RoleModel.id == UUID(role_id)))
+        await self.s.commit()
+        return res.rowcount > 0
 
     async def assign_permission(self, role_id: str, permission_id: str) -> None:
-        role = await self._session.get(RoleModel, uuid.UUID(role_id), options=[selectinload(RoleModel.permissions)])
-        perm = await self._session.get(PermissionModel, uuid.UUID(permission_id))
-        if not role or not perm:
-            raise ValueError("role or permission not found")
-        if perm not in role.permissions:
-            role.permissions.append(perm)
-            await self._session.commit()
+        stmt = (
+            pg_insert(role_permissions)
+            .values(role_id=UUID(role_id), permission_id=UUID(permission_id))
+            .on_conflict_do_nothing(
+                index_elements=[role_permissions.c.role_id, role_permissions.c.permission_id]
+            )
+        )
+        await self.s.execute(stmt)
+        await self.s.commit()
 
     async def remove_permission(self, role_id: str, permission_id: str) -> None:
-        role = await self._session.get(RoleModel, uuid.UUID(role_id), options=[selectinload(RoleModel.permissions)])
-        perm = await self._session.get(PermissionModel, uuid.UUID(permission_id))
-        if not role or not perm:
-            raise ValueError("role or permission not found")
-        if perm in role.permissions:
-            role.permissions.remove(perm)
-            await self._session.commit()
+        await self.s.execute(
+            delete(role_permissions).where(
+                role_permissions.c.role_id == UUID(role_id),
+                role_permissions.c.permission_id == UUID(permission_id)
+            )
+        )
+        await self.s.commit()
 
-# ---- Group ----
-class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
+class SQLAlchemyGroupRepository(GroupRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self.s = session
+
     async def add(self, group: Group) -> None:
-        self._session.add(GroupModel(id=uuid.UUID(group.id), tenant_id=group.tenant_id, name=group.name, description=group.description))
-        await self._session.commit()
+        obj = GroupModel(id=UUID(group.id), tenant_id=group.tenant_id, name=group.name, description=group.description)
+        self.s.add(obj)
+        await self.s.commit()
 
-    async def get(self, group_id: str) -> optional[Group]:
-        stmt = select(GroupModel).where(GroupModel.id == uuid.UUID(group_id)).options(selectinload(GroupModel.roles))
-        obj = (await self._session.execute(stmt)).scalars().first()
-        if not obj:
-            return None
-        return Group(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
-                     _description=obj.description or "", _roles=[str(r.id) for r in obj.roles])
+    async def get(self, group_id: str) -> Group | None:
+        res = await self.s.execute(
+            select(GroupModel).options(selectinload(GroupModel.roles)).where(GroupModel.id == UUID(group_id))
+        )
+        m = res.scalars().first()
+        return _to_group(m) if m else None
 
-    async def list(self, tenant_id: optional[str] = None) -> list[Group]:
+    async def list(self, tenant_id: str | None = None) -> list[Group]:
         stmt = select(GroupModel).options(selectinload(GroupModel.roles))
         if tenant_id is not None:
             stmt = stmt.where(GroupModel.tenant_id == tenant_id)
-        res = await self._session.execute(stmt)
-        out: list[Group] = []
-        for obj in res.scalars().all():
-            out.append(Group(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
-                             _description=obj.description or "", _roles=[str(r.id) for r in obj.roles]))
-        return out
+        res = await self.s.execute(stmt)
+        return [_to_group(m) for m in res.scalars().all()]
 
     async def delete(self, group_id: str) -> bool:
-        obj = await self._session.get(GroupModel, uuid.UUID(group_id))
-        if not obj:
-            return False
-        await self._session.delete(obj)
-        await self._session.commit()
-        return True
+        res = await self.s.execute(delete(GroupModel).where(GroupModel.id == UUID(group_id)))
+        await self.s.commit()
+        return res.rowcount > 0
 
     async def assign_role(self, group_id: str, role_id: str) -> None:
-        grp = await self._session.get(GroupModel, uuid.UUID(group_id), options=[selectinload(GroupModel.roles)])
-        role = await self._session.get(RoleModel, uuid.UUID(role_id))
-        if not grp or not role:
-            raise ValueError("group or role not found")
-        if role not in grp.roles:
-            grp.roles.append(role)
-            await self._session.commit()
+        stmt = (
+            pg_insert(group_roles)
+            .values(group_id=UUID(group_id), role_id=UUID(role_id))
+            .on_conflict_do_nothing(
+                index_elements=[group_roles.c.group_id, group_roles.c.role_id]
+            )
+        )
+        await self.s.execute(stmt)
+        await self.s.commit()
 
     async def remove_role(self, group_id: str, role_id: str) -> None:
-        grp = await self._session.get(GroupModel, uuid.UUID(group_id), options=[selectinload(GroupModel.roles)])
-        role = await self._session.get(RoleModel, uuid.UUID(role_id))
-        if not grp or not role:
-            raise ValueError("group or role not found")
-        if role in grp.roles:
-            grp.roles.remove(role)
-            await self._session.commit()
+        await self.s.execute(
+            delete(group_roles).where(group_roles.c.group_id == UUID(group_id), group_roles.c.role_id == UUID(role_id))
+        )
+        await self.s.commit()
 
-# ---- Account ----
-class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
+class SQLAlchemyAccountRepository(AccountRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self.s = session
+
     async def add(self, account: Account) -> None:
-        self._session.add(AccountModel(id=uuid.UUID(account.id), tenant_id=account.tenant_id, username=account.username, email=account.email))
-        await self._session.commit()
+        obj = AccountModel(id=UUID(account.id), tenant_id=account.tenant_id, username=account.username, email=account.email)
+        self.s.add(obj)
+        await self.s.commit()
 
-    async def get(self, account_id: str) -> optional[Account]:
-        stmt = select(AccountModel).where(AccountModel.id == uuid.UUID(account_id)).options(selectinload(AccountModel.roles), selectinload(AccountModel.groups))
-        obj = (await self._session.execute(stmt)).scalars().first()
-        if not obj:
-            return None
-        return Account(_id=str(obj.id), _username=obj.username, _email=obj.email, _tenant_id=obj.tenant_id,
-                       _roles=[str(r.id) for r in obj.roles], _groups=[str(g.id) for g in obj.groups])
+    async def get(self, account_id: str) -> Account | None:
+        res = await self.s.execute(
+            select(AccountModel).options(selectinload(AccountModel.roles), selectinload(AccountModel.groups)).where(AccountModel.id == UUID(account_id))
+        )
+        m = res.scalars().first()
+        return _to_account(m) if m else None
 
-    async def list(self, tenant_id: optional[str] = None) -> list[Account]:
+    async def list(self, tenant_id: str | None = None) -> list[Account]:
         stmt = select(AccountModel).options(selectinload(AccountModel.roles), selectinload(AccountModel.groups))
         if tenant_id is not None:
             stmt = stmt.where(AccountModel.tenant_id == tenant_id)
-        res = await self._session.execute(stmt)
-        out: list[Account] = []
-        for obj in res.scalars().all():
-            out.append(Account(_id=str(obj.id), _username=obj.username, _email=obj.email, _tenant_id=obj.tenant_id,
-                               _roles=[str(r.id) for r in obj.roles], _groups=[str(g.id) for g in obj.groups]))
-        return out
+        res = await self.s.execute(stmt)
+        return [_to_account(m) for m in res.scalars().all()]
 
     async def delete(self, account_id: str) -> bool:
-        obj = await self._session.get(AccountModel, uuid.UUID(account_id))
-        if not obj:
-            return False
-        await self._session.delete(obj)
-        await self._session.commit()
-        return True
+        res = await self.s.execute(delete(AccountModel).where(AccountModel.id == UUID(account_id)))
+        await self.s.commit()
+        return res.rowcount > 0
 
     async def assign_role(self, account_id: str, role_id: str) -> None:
-        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.roles)])
-        role = await self._session.get(RoleModel, uuid.UUID(role_id))
-        if not acc or not role:
-            raise ValueError("account or role not found")
-        if role not in acc.roles:
-            acc.roles.append(role)
-            await self._session.commit()
+        stmt = (
+            pg_insert(user_roles)
+            .values(account_id=UUID(account_id), role_id=UUID(role_id))
+            .on_conflict_do_nothing(
+                index_elements=[user_roles.c.account_id, user_roles.c.role_id]
+            )
+        )
+        await self.s.execute(stmt)
+        await self.s.commit()
 
     async def remove_role(self, account_id: str, role_id: str) -> None:
-        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.roles)])
-        role = await self._session.get(RoleModel, uuid.UUID(role_id))
-        if not acc or not role:
-            raise ValueError("account or role not found")
-        if role in acc.roles:
-            acc.roles.remove(role)
-            await self._session.commit()
+        await self.s.execute(
+            delete(user_roles).where(user_roles.c.account_id == UUID(account_id), user_roles.c.role_id == UUID(role_id))
+        )
+        await self.s.commit()
 
     async def assign_group(self, account_id: str, group_id: str) -> None:
-        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.groups)])
-        grp = await self._session.get(GroupModel, uuid.UUID(group_id))
-        if not acc or not grp:
-            raise ValueError("account or group not found")
-        if grp not in acc.groups:
-            acc.groups.append(grp)
-            await self._session.commit()
+        stmt = (
+            pg_insert(user_groups)
+            .values(account_id=UUID(account_id), group_id=UUID(group_id))
+            .on_conflict_do_nothing(
+                index_elements=[user_groups.c.account_id, user_groups.c.group_id]
+            )
+        )
+        await self.s.execute(stmt)
+        await self.s.commit()
 
     async def remove_group(self, account_id: str, group_id: str) -> None:
-        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.groups)])
-        grp = await self._session.get(GroupModel, uuid.UUID(group_id))
-        if not acc or not grp:
-            raise ValueError("account or group not found")
-        if grp in acc.groups:
-            acc.groups.remove(grp)
-            await self._session.commit()
+        await self.s.execute(
+            delete(user_groups).where(user_groups.c.account_id == UUID(account_id), user_groups.c.group_id == UUID(group_id))
+        )
+        await self.s.commit()
 
-# ---- Resource ----
-class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
-    async def add(self, resource: Resource) -> None:
-        self._session.add(ResourceModel(
-            id=uuid.UUID(resource.id),
-            type=resource.type,
-            name=resource.name,
-            tenant_id=resource.tenant_id,
-            owner_id=uuid.UUID(resource.owner_id) if resource.owner_id else None,
-            resource_metadata=resource.metadata,   # ✅ 修复字段名
-        ))
-        await self._session.commit()
+class SQLAlchemyResourceRepository(ResourceRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self.s = session
 
-    async def get(self, resource_id: str) -> optional[Resource]:
-        obj = await self._session.get(ResourceModel, uuid.UUID(resource_id))
-        if not obj:
-            return None
-        return Resource(_id=str(obj.id), _type=obj.type, _name=obj.name, _tenant_id=obj.tenant_id,
-                        _owner_id=str(obj.owner_id) if obj.owner_id else None,
-                        _metadata=obj.resource_metadata or {})
+    async def add(self, res: Resource) -> None:
+        obj = ResourceModel(
+            id=UUID(res.id),
+            type=res.type,
+            name=res.name,
+            tenant_id=res.tenant_id,
+            owner_id=UUID(res.owner_id) if res.owner_id else None,
+            resource_metadata=res.resource_metadata,
+        )
+        self.s.add(obj)
+        await self.s.commit()
 
-    async def list(self, tenant_id: optional[str] = None) -> list[Resource]:
+    async def get(self, res_id: str) -> Resource | None:
+        m = await self.s.get(ResourceModel, UUID(res_id))
+        return _to_resource(m) if m else None
+
+    async def list(self, tenant_id: str | None = None) -> list[Resource]:
         stmt = select(ResourceModel)
         if tenant_id is not None:
             stmt = stmt.where(ResourceModel.tenant_id == tenant_id)
-        res = await self._session.execute(stmt)
-        return [Resource(_id=str(o.id), _type=o.type, _name=o.name, _tenant_id=o.tenant_id,
-                         _owner_id=str(o.owner_id) if o.owner_id else None,
-                         _metadata=o.resource_metadata or {}) for o in res.scalars().all()]
+        res = await self.s.execute(stmt)
+        return [_to_resource(m) for m in res.scalars().all()]
 
-    async def delete(self, resource_id: str) -> bool:
-        obj = await self._session.get(ResourceModel, uuid.UUID(resource_id))
-        if not obj:
-            return False
-        await self._session.delete(obj)
-        await self._session.commit()
-        return True
+    async def delete(self, res_id: str) -> bool:
+        res = await self.s.execute(
+            delete(ResourceModel).where(ResourceModel.id == UUID(res_id))
+        )
+        await self.s.commit()
+        return res.rowcount > 0
+
+
+class AuditLogRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.s = session
+
+    async def record(self, *, account_id: str, action: str, resource: str | None, result: bool, message: str | None = None) -> None:
+        obj = AuditLogModel(
+            id=uuid4(),  
+            account_id=UUID(account_id),
+            action=action,
+            resource=resource,
+            result=result,
+            message=message,
+        )
+        self.s.add(obj)
+        await self.s.commit()

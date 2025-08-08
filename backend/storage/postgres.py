@@ -13,9 +13,6 @@ from __future__ import annotations
 
 import logging
 import json
-import psycopg2
-from psycopg2.extras import RealdictCursor
-from typing import list, Optional, Sequence
 
 from ..config import Settings
 from ..models import Account, Group, Permission, Resource, Role
@@ -49,7 +46,6 @@ class PostgresDatabase:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealdictCursor)
         self._conn.autocommit = True  # 简化示例，不建议在生产中使用 autocommit
 
     def cursor(self):  # type: ignore[no-untyped-def]
@@ -79,7 +75,7 @@ class PostgresPermissionRepository(_BaseRepository, PermissionRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (permission.id, permission.name, permission.description))
 
-    def get(self, permission_id: str) -> Optional[Permission]:
+    def get(self, permission_id: str) -> Permission|None:
         sql = """
             SELECT id, name, description
             FROM permissions
@@ -92,7 +88,7 @@ class PostgresPermissionRepository(_BaseRepository, PermissionRepository):
                 return Permission(_id=row["id"], _name=row["name"], _description=row["description"])  # type: ignore[call-arg]
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> list[Permission]:
+    def list(self, tenant_id: str|None = None) -> list[Permission]:
         # 权限表不区分租户，此处忽略 tenant_id
         sql = """
             SELECT id, name, description
@@ -116,7 +112,7 @@ class PostgresRoleRepository(_BaseRepository, RoleRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (role.id, role.tenant_id, role.name, role.description))
 
-    def get(self, role_id: str) -> Optional[Role]:
+    def get(self, role_id: str) -> Role|None:
         sql = """
             SELECT id, tenant_id, name, description
             FROM roles
@@ -135,12 +131,12 @@ class PostgresRoleRepository(_BaseRepository, RoleRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> list[Role]:
+    def list(self, tenant_id: str|None = None) -> list[Role]:
         sql = """
             SELECT id, tenant_id, name, description
             FROM roles
         """
-        params: Sequence[object] = []
+        params: sequeue[object] = []
         if tenant_id is not None:
             sql += " WHERE tenant_id = %s"
             params = [tenant_id]
@@ -192,7 +188,7 @@ class PostgresGroupRepository(_BaseRepository, GroupRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (group.id, group.tenant_id, group.name, group.description))
 
-    def get(self, group_id: str) -> Optional[Group]:
+    def get(self, group_id: str) -> Group|None:
         sql = """
             SELECT id, tenant_id, name, description
             FROM groups
@@ -212,12 +208,12 @@ class PostgresGroupRepository(_BaseRepository, GroupRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> list[Group]:
+    def list(self, tenant_id: str|None = None) -> list[Group]:
         sql = """
             SELECT id, tenant_id, name, description
             FROM groups
         """
-        params: Sequence[object] = []
+        params: sequeue[object] = []
         if tenant_id is not None:
             sql += " WHERE tenant_id = %s"
             params = [tenant_id]
@@ -269,7 +265,7 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (account.id, account.tenant_id, account.username, account.email))
 
-    def get(self, account_id: str) -> Optional[Account]:
+    def get(self, account_id: str) -> Account|None:
         sql = """
             SELECT id, tenant_id, username, email
             FROM accounts
@@ -291,12 +287,12 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> list[Account]:
+    def list(self, tenant_id: str|None = None) -> list[Account]:
         sql = """
             SELECT id, tenant_id, username, email
             FROM accounts
         """
-        params: Sequence[object] = []
+        params: sequeue[object] = []
         if tenant_id is not None:
             sql += " WHERE tenant_id = %s"
             params = [tenant_id]
@@ -365,7 +361,7 @@ class PostgresResourceRepository(_BaseRepository, ResourceRepository):
             INSERT INTO resources (id, type, name, tenant_id, owner_id, metadata)
             VALUES (%s, %s, %s, %s, %s, %s)
         """
-        metadata_str = json.dumps(resource.metadata)  # type: ignore[name-defined]
+        metadata_str = json.dumps(resource.metadata)  
         with self._db.cursor() as cur:
             cur.execute(
                 sql,
@@ -379,7 +375,7 @@ class PostgresResourceRepository(_BaseRepository, ResourceRepository):
                 ),
             )
 
-    def get(self, resource_id: str) -> Optional[Resource]:
+    def get(self, resource_id: str) -> Resource|None:
         sql = """
             SELECT id, type, name, tenant_id, owner_id, metadata
             FROM resources
@@ -408,12 +404,12 @@ class PostgresResourceRepository(_BaseRepository, ResourceRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> list[Resource]:
+    def list(self, tenant_id: str|None = None) -> list[Resource]:
         sql = """
             SELECT id, type, name, tenant_id, owner_id, metadata
             FROM resources
         """
-        params: Sequence[object] = []
+        params: sequeue[object] = []
         if tenant_id is not None:
             sql += " WHERE tenant_id = %s"
             params = [tenant_id]

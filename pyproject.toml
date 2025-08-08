@@ -8,11 +8,12 @@ authors = ["xueyu <xueuy@qq.com>"]
 python = ">=3.11,<3.13"
 fastapi = "^0.110"
 uvicorn = "^0.27"
-pydantic = "^1.10"
+pydantic = {extras = ["email"], version = "^2.11.7"}
 sqlalchemy = "^2.0"
 psycopg2-binary = "^2.9"
 casbin = "^1.18"
 asyncpg = "^0.30.0"
+requests = "^2.32.4"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.4"

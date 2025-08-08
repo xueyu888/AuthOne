@@ -1,7 +1,8 @@
 # backend/core/casbin_adapter.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional
+import casbin
+
 
 __all__ = ["CasbinEngine"]
 
@@ -14,33 +15,33 @@ class CasbinEngine:
     _domain_enabled: bool = True  # 租户隔离作为 domain
 
     # ---- 授权策略录入 ----
-    def add_permission_for_user(self, role_id: str, tenant_id: Optional[str], resource: str, action: str) -> None:
+    def add_permission_for_user(self, role_id: str, tenant_id: str|None, resource: str, action: str) -> None:
         if self._domain_enabled:
             self._enforcer.add_policy(role_id, tenant_id or "*", resource, action)
 
-    def add_role_for_account(self, account_id: str, tenant_id: Optional[str], role_id: str) -> None:
+    def add_role_for_account(self, account_id: str, tenant_id: str|None, role_id: str) -> None:
         if self._domain_enabled:
             self._enforcer.add_grouping_policy(account_id, role_id, tenant_id or "*")
 
-    def add_role_for_group(self, group_id: str, tenant_id: Optional[str], role_id: str) -> None:
+    def add_role_for_group(self, group_id: str, tenant_id: str|None, role_id: str) -> None:
         if self._domain_enabled:
             self._enforcer.add_grouping_policy(group_id, role_id, tenant_id or "*")
 
-    def add_group_for_account(self, account_id: str, tenant_id: Optional[str], group_id: str) -> None:
+    def add_group_for_account(self, account_id: str, tenant_id: str|None, group_id: str) -> None:
         if self._domain_enabled:
             self._enforcer.add_grouping_policy(account_id, group_id, tenant_id or "*")
 
     # ---- 回收/解绑 ----
-    def remove_permission_from_user(self, role_id: str, tenant_id: Optional[str], resource: str, action: str) -> None:
+    def remove_permission_from_user(self, role_id: str, tenant_id: str|None, resource: str, action: str) -> None:
         self._enforcer.remove_policy(role_id, tenant_id or "*", resource, action)
 
-    def remove_role_for_account(self, account_id: str, tenant_id: Optional[str], role_id: str) -> None:
+    def remove_role_for_account(self, account_id: str, tenant_id: str|None, role_id: str) -> None:
         self._enforcer.remove_grouping_policy(account_id, role_id, tenant_id or "*")
 
-    def remove_role_for_group(self, group_id: str, tenant_id: Optional[str], role_id: str) -> None:
+    def remove_role_for_group(self, group_id: str, tenant_id: str|None, role_id: str) -> None:
         self._enforcer.remove_grouping_policy(group_id, role_id, tenant_id or "*")
 
-    def remove_group_for_account(self, account_id: str, tenant_id: Optional[str], group_id: str) -> None:
+    def remove_group_for_account(self, account_id: str, tenant_id: str|None, group_id: str) -> None:
         self._enforcer.remove_grouping_policy(account_id, group_id, tenant_id or "*")
 
     def remove_filtered_policies_for_subject(self, subject_id: str) -> None:
@@ -49,7 +50,7 @@ class CasbinEngine:
         self._enforcer.remove_filtered_policy(0, subject_id)
 
     # ---- 决策 ----
-    def enforce(self, account_id: str, tenant_id: Optional[str], resource: str, action: str) -> bool:
+    def enforce(self, account_id: str, tenant_id: str|None, resource: str, action: str) -> bool:
         if self._domain_enabled:
             return bool(self._enforcer.enforce(account_id, tenant_id or "*", resource, action))
         return bool(self._enforcer.enforce(account_id, resource, action))

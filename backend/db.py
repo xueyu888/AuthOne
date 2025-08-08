@@ -7,12 +7,8 @@
 
 # backend/db.py
 from __future__ import annotations
-
 import json
-import os
 from dataclasses import dataclass
-from typing import Optional
-
 from sqlalchemy import Table, Column, String, Text, Boolean, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -59,7 +55,7 @@ class PermissionModel(Base):
 class RoleModel(Base):
     __tablename__ = "roles"
     id: str = Column(UUID(as_uuid=True), primary_key=True)
-    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    tenant_id: str|None = Column(String(255), nullable=True, index=True)
     name: str = Column(String(255), nullable=False)
     description: str = Column(Text, nullable=True)
     permissions = relationship(PermissionModel, secondary=role_permissions, back_populates="roles")
@@ -69,7 +65,7 @@ class RoleModel(Base):
 class GroupModel(Base):
     __tablename__ = "groups"
     id: str = Column(UUID(as_uuid=True), primary_key=True)
-    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    tenant_id: str|None = Column(String(255), nullable=True, index=True)
     name: str = Column(String(255), nullable=False)
     description: str = Column(Text, nullable=True)
     roles = relationship(RoleModel, secondary=group_roles, back_populates="groups")
@@ -80,7 +76,7 @@ class GroupModel(Base):
 class AccountModel(Base):
     __tablename__ = "accounts"
     id: str = Column(UUID(as_uuid=True), primary_key=True)
-    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    tenant_id: str|None = Column(String(255), nullable=True, index=True)
     username: str = Column(String(255), nullable=False)
     email: str = Column(String(255), nullable=False, unique=True)
     roles = relationship(RoleModel, secondary=user_roles, back_populates="accounts")
@@ -91,8 +87,8 @@ class ResourceModel(Base):
     id: str = Column(UUID(as_uuid=True), primary_key=True)
     type: str = Column(String(255), nullable=False)
     name: str = Column(String(255), nullable=False)
-    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
-    owner_id: Optional[str] = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
+    tenant_id: str|None = Column(String(255), nullable=True, index=True)
+    owner_id: str|None = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
     resource_metadata: dict = Column(JSON, nullable=True)
 
 class AuditLogModel(Base):
@@ -118,11 +114,10 @@ class CasbinRuleModel(Base):
 
 
 # ---------- Engine / Session (单例) ----------
-_ENGINE: Optional[AsyncEngine] = None
-_SESSION_FACTORY: Optional[async_sessionmaker[AsyncSession]] = None
+_ENGINE: AsyncEngine | None = None
+_SESSION_FACTORY: async_sessionmaker[AsyncSession] | None = None
 
 def init_engine(db_url: str) -> None:
-    """初始化全局引擎与 session 工厂（幂等）。"""
     global _ENGINE, _SESSION_FACTORY
     if _ENGINE is None:
         _ENGINE = create_async_engine(
@@ -144,10 +139,15 @@ async def dispose_engine() -> None:
         await _ENGINE.dispose()
         _ENGINE = None
 
-async def init_db(drop_all: bool = False) -> None:
-    """创建表结构；与当前全局引擎保持一致。"""
+# 改：允许传 Settings（测试里就这么用），否则使用既有引擎
+async def init_db(settings: "Settings | None" = None, drop_all: bool = False) -> None:
+    global _ENGINE
+    if settings is not None:
+        # 若传入 settings，幂等初始化引擎
+        init_engine(settings.db_url)
     if _ENGINE is None:
         raise RuntimeError("Engine not initialized")
+
     async with _ENGINE.begin() as conn:
         if drop_all:
             await conn.run_sync(Base.metadata.drop_all)

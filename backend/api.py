@@ -1,19 +1,59 @@
 # backend/api.py
 from __future__ import annotations
-from typing import Optional, List
+import os
 
 from fastapi import FastAPI, HTTPException, Path, status
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 
-from .db import init_engine, init_db, dispose_engine
 from .service import AuthService
 from .core.casbin_adapter import CasbinEngine
 
+from contextlib import asynccontextmanager
+from backend.config import Settings
+from backend.db import init_engine, init_db, get_session, dispose_engine
+import casbin
+from casbin.util import key_match, regex_match
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _svc
+
+    defaults = Settings()
+    s = Settings(
+        db_url=os.getenv("DB_URL", defaults.db_url),
+        casbin_model_path=os.getenv("CASBIN_MODEL_PATH", defaults.casbin_model_path),
+        casbin_policy_table=defaults.casbin_policy_table,
+        log_level=defaults.log_level,
+    )
+
+    # 只在这里初始化一次（不要再有 on_event 二次初始化）
+    init_engine(s.db_url)
+    await init_db(drop_all=False)
+
+    # Casbin：文件版最简单；如果你有 adapter，就换成 adapter
+    e = casbin.Enforcer(s.casbin_model_path, "rbac_policy.csv")
+    e.add_function("keyMatch", key_match)
+    e.add_function("regexMatch", regex_match)
+
+    _svc = await AuthService.create(CasbinEngine(e))
+
+    # 打印确认
+    sess = get_session()
+    bind = sess.get_bind()
+    print(f"[DB] dialect={bind.dialect.name}, url={bind.engine.url}")
+    await sess.close()
+
+    try:
+        yield
+    finally:
+        await dispose_engine()
+        _svc = None  # 可选，确保优雅关闭
+
 # --------- Settings & CORS 来源（生产不要 *）---------
 ALLOWED_ORIGINS = []  # 从环境或配置加载
-app = FastAPI(title="AuthOne IAM Service")
+app = FastAPI(title="AuthOne IAM Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,42 +70,42 @@ class PermissionCreate(BaseModel):
 
 class RoleCreate(BaseModel):
     name: str = Field(min_length=1)
-    tenant_id: Optional[str] = None
+    tenant_id: str | None = None
     description: str = Field(default="")
 
 class GroupCreate(BaseModel):
     name: str
-    tenant_id: Optional[str] = None
+    tenant_id: str | None = None
     description: str = Field(default="")
 
 class AccountCreate(BaseModel):
     username: str
     email: EmailStr
-    tenant_id: Optional[str] = None
+    tenant_id: str | None = None
 
 class ResourceCreate(BaseModel):
     resource_type: str = Field(min_length=1)
     name: str = Field(min_length=1)
-    tenant_id: Optional[str] = None
-    owner_id: Optional[str] = None
+    tenant_id: str | None = None
+    owner_id: str | None = None
     metadata: dict = Field(default_factory=dict)
 
 # --------- 生命周期：引擎与服务 ---------
-_svc: Optional[AuthService] = None
+_svc: AuthService|None = None
 
-@app.on_event("startup")
-async def startup() -> None:
-    global _svc
-    init_engine(db_url="sqlite+aiosqlite:///./app.db")  # 生产从环境读取
-    await init_db()
-    # 这里示意注入一个已构造好的 enforcer
-    import casbin
-    enforcer = casbin.Enforcer("rbac_model.conf", "rbac_policy.csv")  # 生产使用 adapter
-    _svc = await AuthService.create(CasbinEngine(enforcer))
+# @app.on_event("startup")
+# async def startup() -> None:
+#     global _svc
+#     init_engine(db_url="sqlite+aiosqlite:///./app.db")  # 生产从环境读取
+#     await init_db()
+#     # 这里示意注入一个已构造好的 enforcer
+#     import casbin
+#     enforcer = casbin.Enforcer("rbac_model.conf", "rbac_policy.csv" )  # 生产使用 adapter
+#     _svc = await AuthService.create(CasbinEngine(enforcer))
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    await dispose_engine()
+# @app.on_event("shutdown")
+# async def shutdown() -> None:
+#     await dispose_engine()
 
 def _svc_required() -> AuthService:
     if _svc is None:
@@ -214,3 +254,29 @@ async def remove_group_from_account(account_id: str, group_id: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
+
+# ----- 访问校验 -----
+class AccessCheckBody(BaseModel):
+    account_id: str
+    tenant_id: str | None = None
+    resource: str
+    action: str
+
+class AccessCheckResult(BaseModel):
+    allowed: bool
+    reason: str | None = None
+
+@app.post("/check_access", response_model=AccessCheckResult)
+async def check_access(body: AccessCheckBody):
+    svc = _svc_required()
+    resp = await svc.check_access(
+        account_id=body.account_id,
+        tenant_id=body.tenant_id,
+        resource=body.resource,
+        action=body.action,
+    )
+    # resp 应该是你 service 层的 AccessCheckResponse
+    return {"allowed": resp.allowed, "reason": resp.reason}
+
+
+
