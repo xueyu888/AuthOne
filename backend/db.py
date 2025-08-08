@@ -135,9 +135,11 @@ def get_session(settings: Settings) -> AsyncSession:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     return factory()
 
-async def init_db(settings: Settings) -> None:
+async def init_db(settings: Settings, drop_all: bool = False) -> None:
     engine = create_async_engine(settings.db_url, future=True)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        if drop_all:
+            await conn.run_sync(Base.metadata.drop_all)
+            print("Dropped all tables.")
         await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
