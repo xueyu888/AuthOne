@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import dict, Optional
 
 __all__ = ["Resource"]
 
@@ -23,7 +23,7 @@ class Resource:
     _name: str
     _tenant_id: Optional[str]
     _owner_id: Optional[str]
-    _metadata: Dict[str, str] = field(default_factory=dict)
+    _metadata: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -32,7 +32,7 @@ class Resource:
         name: str,
         tenant_id: Optional[str],
         owner_id: Optional[str],
-        metadata: Optional[Dict[str, str]] = None,
+        metadata: Optional[dict[str, str]] = None,
     ) -> "Resource":
         if not resource_type:
             raise ValueError("resource type must not be empty")
@@ -68,5 +68,5 @@ class Resource:
         return self._owner_id
 
     @property
-    def metadata(self) -> Dict[str, str]:
+    def metadata(self) -> dict[str, str]:
         return dict(self._metadata)

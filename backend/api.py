@@ -1,233 +1,216 @@
-"""FastAPI 应用入口。
-
-此模块定义了一组 RESTful 接口，用于管理权限相关实体及执行权限校验。
-客户端（如前端或其他服务）可以通过这些接口完成权限配置和访问判断。
-"""
-
+# backend/api.py
 from __future__ import annotations
+from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException, Path, status
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr
 
-from .config import Settings
-from .models import (
-    AccessCheckRequest,
-    AccessCheckResponse,
-)
+from .db import init_engine, init_db, dispose_engine
 from .service import AuthService
-from .db import init_db
+from .core.casbin_adapter import CasbinEngine
 
+# --------- Settings & CORS 来源（生产不要 *）---------
+ALLOWED_ORIGINS = []  # 从环境或配置加载
 app = FastAPI(title="AuthOne IAM Service")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 或限制具体来源
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],  # dev 时可 *
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有方法，包括 OPTIONS
-    allow_headers=["*"],  # 允许所有 headers
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-_settings: Settings | None = None
-_svc: AuthService | None = None
+# --------- 请求体模型（契约化）---------
+class PermissionCreate(BaseModel):
+    name: str = Field(min_length=3)
+    description: str = Field(default="")
 
+class RoleCreate(BaseModel):
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class GroupCreate(BaseModel):
+    name: str
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class AccountCreate(BaseModel):
+    username: str
+    email: EmailStr
+    tenant_id: Optional[str] = None
+
+class ResourceCreate(BaseModel):
+    resource_type: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    owner_id: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+# --------- 生命周期：引擎与服务 ---------
+_svc: Optional[AuthService] = None
 
 @app.on_event("startup")
-async def on_startup() -> None:
-    """初始化数据库并创建服务实例。
+async def startup() -> None:
+    global _svc
+    init_engine(db_url="sqlite+aiosqlite:///./app.db")  # 生产从环境读取
+    await init_db()
+    # 这里示意注入一个已构造好的 enforcer
+    import casbin
+    enforcer = casbin.Enforcer("rbac_model.conf", "rbac_policy.csv")  # 生产使用 adapter
+    _svc = await AuthService.create(CasbinEngine(enforcer))
 
-    当 FastAPI 应用启动时，先创建数据库表结构，再异步初始化
-    ``AuthService``。如果需要自定义配置，可在此修改 ``_settings``。
-    """
-    global _settings, _svc
-    _settings = Settings()
-    # 创建数据库表
-    await init_db(_settings)
-    # 创建服务实例
-    _svc = await AuthService.create(_settings)
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await dispose_engine()
 
-
-def _require_service() -> AuthService:
-    """获取已经初始化的 AuthService 实例。
-
-    在处理请求之前，确保服务已创建；否则抛出运行时错误。
-    """
+def _svc_required() -> AuthService:
     if _svc is None:
         raise RuntimeError("Service not initialized")
     return _svc
-
 
 @app.get("/", include_in_schema=False)
 async def root_redirect():
     return RedirectResponse(url="/docs")
 
+# --------- 基础 CRUD ---------
+@app.post("/permissions", status_code=status.HTTP_201_CREATED)
+async def create_permission(body: PermissionCreate):
+    svc = _svc_required()
+    p = await svc.create_permission(body.name, body.description)
+    return {"id": p.id, "name": p.name, "description": p.description}
 
-@app.post("/permissions", response_model=dict)
-async def create_permission(name: str, description: str = "") -> dict:
-    svc = _require_service()
-    perm = await svc.create_permission(name, description)
-    return {"id": perm.id, "name": perm.name, "description": perm.description}
+@app.delete("/permissions/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_permission(permission_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_permission(permission_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="permission not found")
 
+@app.post("/roles", status_code=status.HTTP_201_CREATED)
+async def create_role(body: RoleCreate):
+    svc = _svc_required()
+    r = await svc.create_role(body.tenant_id, body.name, body.description)
+    return {"id": r.id, "name": r.name, "tenant_id": r.tenant_id}
 
-@app.get("/permissions", response_model=list[dict])
-async def list_permissions(tenant_id: str | None = None) -> list[dict]:
-    svc = _require_service()
-    perms = await svc.list_permissions(tenant_id)
-    return [
-        {"id": p.id, "name": p.name, "description": p.description}
-        for p in perms
-    ]
+@app.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(role_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_role(role_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="role not found")
 
+@app.post("/groups", status_code=status.HTTP_201_CREATED)
+async def create_group(body: GroupCreate):
+    svc = _svc_required()
+    g = await svc.create_group(body.tenant_id, body.name, body.description)
+    return {"id": g.id, "name": g.name, "tenant_id": g.tenant_id}
 
-@app.post("/roles", response_model=dict)
-async def create_role(name: str, tenant_id: str | None = None, description: str = "") -> dict:
-    svc = _require_service()
-    role = await svc.create_role(tenant_id, name, description)
-    return {"id": role.id, "name": role.name, "tenant_id": role.tenant_id}
+@app.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(group_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_group(group_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="group not found")
 
+@app.post("/accounts", status_code=status.HTTP_201_CREATED)
+async def create_account(body: AccountCreate):
+    svc = _svc_required()
+    a = await svc.create_account(body.username, str(body.email), body.tenant_id)
+    return {"id": a.id, "username": a.username, "tenant_id": a.tenant_id}
 
-@app.get("/roles", response_model=list[dict])
-async def list_roles(tenant_id: str | None = None) -> list[dict]:
-    svc = _require_service()
-    roles = await svc.list_roles(tenant_id)
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "tenant_id": r.tenant_id,
-            "permissions": r.permissions,
-        }
-        for r in roles
-    ]
+@app.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(account_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_account(account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="account not found")
 
+@app.post("/resources", status_code=status.HTTP_201_CREATED)
+async def create_resource(body: ResourceCreate):
+    svc = _svc_required()
+    r = await svc.create_resource(body.resource_type, body.name, body.tenant_id, body.owner_id, body.metadata)
+    return {"id": r.id, "name": r.name, "type": r.type, "tenant_id": r.tenant_id}
 
-@app.post("/groups", response_model=dict)
-async def create_group(name: str, tenant_id: str | None = None, description: str = "") -> dict:
-    svc = _require_service()
-    group = await svc.create_group(tenant_id, name, description)
-    return {"id": group.id, "name": group.name, "tenant_id": group.tenant_id}
+@app.delete("/resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_resource(resource_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_resource(resource_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="resource not found")
 
-
-@app.get("/groups", response_model=list[dict])
-async def list_groups(tenant_id: str | None = None) -> list[dict]:
-    svc = _require_service()
-    groups = await svc.list_groups(tenant_id)
-    return [
-        {
-            "id": g.id,
-            "name": g.name,
-            "tenant_id": g.tenant_id,
-            "roles": g.roles,
-        }
-        for g in groups
-    ]
-
-
-@app.post("/accounts", response_model=dict)
-async def create_account(username: str, email: str, tenant_id: str | None = None) -> dict:
-    svc = _require_service()
-    acc = await svc.create_account(username, email, tenant_id)
-    return {"id": acc.id, "username": acc.username, "tenant_id": acc.tenant_id}
-
-
-@app.get("/accounts", response_model=list[dict])
-async def list_accounts(tenant_id: str | None = None) -> list[dict]:
-    svc = _require_service()
-    accounts = await svc.list_accounts(tenant_id)
-    return [
-        {
-            "id": a.id,
-            "username": a.username,
-            "email": a.email,
-            "tenant_id": a.tenant_id,
-            "roles": a.roles,
-            "groups": a.groups,
-        }
-        for a in accounts
-    ]
-
-
-@app.post("/resources", response_model=dict)
-async def create_resource(
-    resource_type: str,
-    name: str,
-    tenant_id: str | None = None,
-    owner_id: str | None = None,
-) -> dict:
-    svc = _require_service()
-    res = await svc.create_resource(resource_type, name, tenant_id, owner_id)
-    return {"id": res.id, "name": res.name, "type": res.type, "tenant_id": res.tenant_id}
-
-
-@app.get("/resources", response_model=list[dict])
-async def list_resources(tenant_id: str | None = None) -> list[dict]:
-    svc = _require_service()
-    res = await svc.list_resources(tenant_id)
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "type": r.type,
-            "tenant_id": r.tenant_id,
-            "owner_id": r.owner_id,
-        }
-        for r in res
-    ]
-
-
+# --------- 关系绑定 / 解绑 ---------
 @app.post("/roles/{role_id}/permissions/{permission_id}")
-async def assign_permission_to_role(
-    role_id: str = Path(..., description="角色 ID"),
-    permission_id: str = Path(..., description="权限 ID"),
-) -> dict:
-    svc = _require_service()
+async def assign_permission_to_role(role_id: str, permission_id: str):
+    svc = _svc_required()
     try:
         await svc.assign_permission_to_role(role_id, permission_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
 
+@app.delete("/roles/{role_id}/permissions/{permission_id}")
+async def remove_permission_from_role(role_id: str, permission_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_permission_from_role(role_id, permission_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
 
 @app.post("/accounts/{account_id}/roles/{role_id}")
-async def assign_role_to_account(
-    account_id: str = Path(..., description="账户 ID"),
-    role_id: str = Path(..., description="角色 ID"),
-) -> dict:
-    svc = _require_service()
+async def assign_role_to_account(account_id: str, role_id: str):
+    svc = _svc_required()
     try:
         await svc.assign_role_to_account(account_id, role_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
 
+@app.delete("/accounts/{account_id}/roles/{role_id}")
+async def remove_role_from_account(account_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_role_from_account(account_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
 
 @app.post("/groups/{group_id}/roles/{role_id}")
-async def assign_role_to_group(
-    group_id: str = Path(..., description="用户组 ID"),
-    role_id: str = Path(..., description="角色 ID"),
-) -> dict:
-    svc = _require_service()
+async def assign_role_to_group(group_id: str, role_id: str):
+    svc = _svc_required()
     try:
         await svc.assign_role_to_group(group_id, role_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
 
+@app.delete("/groups/{group_id}/roles/{role_id}")
+async def remove_role_from_group(group_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_role_from_group(group_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
 
 @app.post("/accounts/{account_id}/groups/{group_id}")
-async def assign_group_to_account(
-    account_id: str = Path(..., description="账户 ID"),
-    group_id: str = Path(..., description="用户组 ID"),
-) -> dict:
-    svc = _require_service()
+async def assign_group_to_account(account_id: str, group_id: str):
+    svc = _svc_required()
     try:
         await svc.assign_group_to_account(account_id, group_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
 
-
-@app.post("/access/check", response_model=AccessCheckResponse)
-async def check_access(req: AccessCheckRequest) -> AccessCheckResponse:
-    svc = _require_service()
-    return await svc.check_access(req)
+@app.delete("/accounts/{account_id}/groups/{group_id}")
+async def remove_group_from_account(account_id: str, group_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_group_from_account(account_id, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}

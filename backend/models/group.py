@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 __all__ = ["Group"]
 
@@ -19,17 +19,18 @@ class Group:
     _tenant_id: Optional[str]
     _name: str
     _description: str
-    _roles: List[str] = field(default_factory=list)
+    _roles: list[str]
 
     @classmethod
     def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Group":
         if not name:
             raise ValueError("group name must not be empty")
         return cls(
-            _id=str(uuid.uuid4()),
-            _tenant_id=tenant_id,
-            _name=name,
-            _description=description or "",
+            _id = str(uuid.uuid4()),
+            _tenant_id = tenant_id,
+            _name = name,
+            _description = description or "",
+            _roles = [],
         )
 
     @property
@@ -49,8 +50,8 @@ class Group:
         return self._description
 
     @property
-    def roles(self) -> List[str]:
-        return list(self._roles)
+    def roles(self) -> list[str]:
+        return self._roles.copy()
 
     def add_role(self, role_id: str) -> None:
         if role_id not in self._roles:

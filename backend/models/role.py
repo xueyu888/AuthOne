@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import list, Optional
 
 __all__ = ["Role"]
 
@@ -21,7 +21,7 @@ class Role:
     _tenant_id: Optional[str]
     _name: str
     _description: str
-    _permissions: List[str] = field(default_factory=list)
+    _permissions: list[str] = field(default_factory=list)
 
     @classmethod
     def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Role":
@@ -51,7 +51,7 @@ class Role:
         return self._description
 
     @property
-    def permissions(self) -> List[str]:
+    def permissions(self) -> list[str]:
         return list(self._permissions)
 
     def add_permission(self, permission_id: str) -> None:

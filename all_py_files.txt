@@ -1,0 +1,2636 @@
+"""AuthService 单元测试。
+"""
+from __future__ import annotations
+import pytest
+import pytest_asyncio
+
+# Mark all tests in this file as asyncio, requires pytest-asyncio
+pytestmark = pytest.mark.asyncio
+
+try:
+    from backend import AuthService, AccessCheckRequest, Settings
+    from backend.db import init_db
+except ImportError:
+    AuthService = None
+    AccessCheckRequest = None
+    Settings = None
+    init_db = None
+
+
+
+
+@pytest_asyncio.fixture
+async def auth_service() -> AuthService:
+    if any(x is None for x in [AuthService, Settings, init_db]):
+        pytest.skip("Required backend dependencies are missing")
+
+    settings = Settings(
+        db_url="sqlite+aiosqlite:///./test.db",
+        db_url_sync="sqlite:///./test.db",
+    )
+    
+    await init_db(settings, drop_all=True)
+
+    svc = await AuthService.create(settings)
+    return svc
+
+    
+async def test_account_role_permission(auth_service: AuthService):
+    svc = auth_service
+    acc = await svc.create_account("alice", "alice@example.com", tenant_id="t1")
+    role = await svc.create_role("t1", "admin")
+    perm = await svc.create_permission("app:create", "create app")
+    await svc.assign_permission_to_role(role.id, perm.id)
+    await svc.assign_role_to_account(acc.id, role.id)
+    
+    req = AccessCheckRequest(account_id=acc.id, resource="app", action="create", tenant_id="t1")
+    resp = await svc.check_access(req)
+    
+    assert resp.allowed is True
+
+async def test_account_group_role_permission(auth_service: AuthService):
+    svc = auth_service
+    acc = await svc.create_account("bob", "bob@example.com", tenant_id="t1")
+    group = await svc.create_group("t1", "devs")
+    role = await svc.create_role("t1", "developer")
+    perm = await svc.create_permission("module:deploy", "deploy module")
+    await svc.assign_permission_to_role(role.id, perm.id)
+    await svc.assign_role_to_group(group.id, role.id)
+    await svc.assign_group_to_account(acc.id, group.id)
+    
+    req = AccessCheckRequest(account_id=acc.id, resource="module", action="deploy", tenant_id="t1")
+    resp = await svc.check_access(req)
+    
+    assert resp.allowed is True
+
+async def test_tenant_isolation(auth_service: AuthService):
+    svc = auth_service
+    acc = await svc.create_account("carol", "carol@example.com", tenant_id="t1")
+    role = await svc.create_role("t2", "crossTenantRole")
+    perm = await svc.create_permission("app:delete", "delete app")
+    await svc.assign_permission_to_role(role.id, perm.id)
+    await svc.assign_role_to_account(acc.id, role.id)
+    
+    req_wrong = AccessCheckRequest(account_id=acc.id, resource="app", action="delete", tenant_id="t1")
+    resp_wrong = await svc.check_access(req_wrong)
+    assert resp_wrong.allowed is False
+
+    req_no_tenant = AccessCheckRequest(account_id=acc.id, resource="app", action="delete")
+    resp_no = await svc.check_access(req_no_tenant)
+    assert resp_no.allowed is False
+
+async def test_unauthorized(auth_service: AuthService):
+    svc = auth_service
+    acc = await svc.create_account("dave", "dave@example.com", tenant_id="t1")
+    perm = await svc.create_permission("file:read", "read file")
+    role = await svc.create_role("t1", "reader")
+    await svc.assign_permission_to_role(role.id, perm.id)
+    
+    req = AccessCheckRequest(account_id=acc.id, resource="file", action="read", tenant_id="t1")
+    resp = await svc.check_access(req)
+    
+    assert resp.allowed is False
+"""测试包初始化。
+
+此文件留空，仅用于 Python 测试发现。"""
+"""数据模型定义。
+
+该模块包含内部使用的实体模型（Permission、Role、Group、Account）以及对外
+接口模型（AccessCheckRequest、AccessCheckResponse）。内部模型采用
+``@dataclass`` 定义，并通过 ``create`` 类方法进行实例化和参数检查。
+对外模型采用 ``pydantic.BaseModel`` 以保证输入输出的契约和验证。
+
+所有属性均设为私有并通过只读属性暴露，以防止外部修改内部状态。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import list, optional
+
+from pydantic import BaseModel, Field, validator
+
+__all__ = [
+    "Permission",
+    "Role",
+    "Group",
+    "Account",
+    "AccessCheckRequest",
+    "AccessCheckResponse",
+]
+
+
+@dataclass(slots=True)
+class Permission:
+    """表示权限实体。
+
+    权限以 ``resource:action`` 的形式命名，例如 ``app:create`` 或
+    ``module:delete``，用于精准描述对某个资源执行某个操作的权力。
+    """
+
+    _id: str
+    _name: str
+    _description: str
+
+    @classmethod
+    def create(cls, name: str, description: str) -> "Permission":
+        """创建一个权限。
+
+        :param name: 权限名称，必须包含冒号分隔符 ``resource:action``
+        :param description: 权限描述，可以为空
+        :returns: ``Permission`` 实例
+        :raises ValueError: 当名称为空或格式不正确时
+        """
+        if not name:
+            raise ValueError("permission name must not be empty")
+        if ":" not in name:
+            raise ValueError("permission name must be in format resource:action")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _name=name,
+            _description=description or "",
+        )
+
+    @property
+    def id(self) -> str:
+        """权限唯一标识符。"""
+        return self._id
+
+    @property
+    def name(self) -> str:
+        """权限名称 ``resource:action``。"""
+        return self._name
+
+    @property
+    def description(self) -> str:
+        """权限的人类可读描述。"""
+        return self._description
+
+
+@dataclass(slots=True)
+class Role:
+    """角色实体。
+
+    角色隶属于租户（tenant），可绑定多个权限。角色通过名称和描述表征其职责。
+    """
+
+    _id: str
+    _tenant_id: optional[str]
+    _name: str
+    _description: str
+    _permissions: list[str] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, tenant_id: optional[str], name: str, description: str) -> "Role":
+        """创建一个角色。
+
+        :param tenant_id: 角色所属的租户 ID，可为空表示全局角色
+        :param name: 角色名称，不能为空
+        :param description: 角色描述
+        :returns: ``Role`` 实例
+        :raises ValueError: 当名称为空时
+        """
+        if not name:
+            raise ValueError("role name must not be empty")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _tenant_id=tenant_id,
+            _name=name,
+            _description=description or "",
+        )
+
+    @property
+    def id(self) -> str:
+        """角色唯一标识符。"""
+        return self._id
+
+    @property
+    def tenant_id(self) -> optional[str]:
+        """角色所属的租户 ID。"""
+        return self._tenant_id
+
+    @property
+    def name(self) -> str:
+        """角色名称。"""
+        return self._name
+
+    @property
+    def description(self) -> str:
+        """角色描述。"""
+        return self._description
+
+    @property
+    def permissions(self) -> list[str]:
+        """角色拥有的权限 ID 列表（只读）。"""
+        return list(self._permissions)
+
+    def add_permission(self, permission_id: str) -> None:
+        """为角色添加一个权限关联。
+
+        :param permission_id: 权限 ID
+        """
+        if permission_id not in self._permissions:
+            self._permissions.append(permission_id)
+
+
+@dataclass(slots=True)
+class Group:
+    """用户组实体。
+
+    用户组（部门）也属于租户，并可绑定多个角色，实现对一类用户的统一授权。
+    """
+
+    _id: str
+    _tenant_id: optional[str]
+    _name: str
+    _description: str
+    _roles: list[str] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, tenant_id: optional[str], name: str, description: str) -> "Group":
+        """创建一个用户组。
+
+        :param tenant_id: 租户 ID，可为空
+        :param name: 用户组名称，不能为空
+        :param description: 描述
+        :returns: ``Group`` 实例
+        :raises ValueError: 当名称为空时
+        """
+        if not name:
+            raise ValueError("group name must not be empty")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _tenant_id=tenant_id,
+            _name=name,
+            _description=description or "",
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def tenant_id(self) -> optional[str]:
+        return self._tenant_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def roles(self) -> list[str]:
+        return list(self._roles)
+
+    def add_role(self, role_id: str) -> None:
+        """绑定角色到此用户组。"""
+        if role_id not in self._roles:
+            self._roles.append(role_id)
+
+
+@dataclass(slots=True)
+class Account:
+    """用户账户实体。
+
+    ``Account`` 代表一个登录账户，可隶属于某个租户，并可直接绑定角色或加入多个用户组。
+    """
+
+    _id: str
+    _username: str
+    _email: str
+    _tenant_id: optional[str]
+    _roles: list[str] = field(default_factory=list)
+    _groups: list[str] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, username: str, email: str, tenant_id: optional[str] = None) -> "Account":
+        """创建一个用户账户。
+
+        :param username: 用户名，不能为空
+        :param email: 邮箱地址，必须包含 ``@``
+        :param tenant_id: 租户 ID，可为空
+        :returns: ``Account`` 实例
+        :raises ValueError: 当用户名或邮箱非法时
+        """
+        if not username:
+            raise ValueError("username must not be empty")
+        if not email or "@" not in email:
+            raise ValueError("invalid email")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _username=username,
+            _email=email,
+            _tenant_id=tenant_id,
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @property
+    def email(self) -> str:
+        return self._email
+
+    @property
+    def tenant_id(self) -> optional[str]:
+        return self._tenant_id
+
+    @property
+    def roles(self) -> list[str]:
+        return list(self._roles)
+
+    @property
+    def groups(self) -> list[str]:
+        return list(self._groups)
+
+    def add_role(self, role_id: str) -> None:
+        if role_id not in self._roles:
+            self._roles.append(role_id)
+
+    def add_group(self, group_id: str) -> None:
+        if group_id not in self._groups:
+            self._groups.append(group_id)
+
+
+class AccessCheckRequest(BaseModel):
+    """访问检查请求模型。
+
+    调用权限校验时使用该模型封装请求参数。``resource`` 和 ``action``
+    分别代表要访问的组件/模块名称和要执行的操作。
+    """
+
+    account_id: str = Field(..., description="用户账户 ID")
+    resource: str = Field(..., description="资源名称，如前端组件或后端模块")
+    action: str = Field(..., description="操作名称，如 create/read/update/delete")
+    tenant_id: optional[str] = Field(None, description="请求所属租户 ID，可为空")
+
+    @validator("account_id", "resource", "action")
+    def _not_empty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("must not be empty")
+        return v
+
+
+class AccessCheckResponse(BaseModel):
+    """访问检查响应模型。
+
+    ``allowed`` 表示是否允许访问，``reason`` 在拒绝时可提供简要说明。
+    """
+
+    allowed: bool = Field(..., description="是否允许访问")
+    reason: optional[str] = Field(None, description="拒绝原因")
+"""SQLAlchemy 仓库实现。
+
+该模块根据 ``storage.interface`` 中定义的协议实现仓库类，使用
+SQLAlchemy ORM 进行数据持久化。由于篇幅限制，这些实现主要展示
+方法签名和整体结构，具体 SQLAlchemy 模型和字段映射应根据实际
+数据库结构补充。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import list, optional
+
+from sqlalchemy.orm import Session
+
+from ..config import Settings
+from ..db import get_session
+from ..models import Account, Group, Permission, Resource, Role
+from .interface import (
+    AccountRepository,
+    GroupRepository,
+    PermissionRepository,
+    ResourceRepository,
+    RoleRepository,
+)
+
+__all__ = [
+    "SQLAlchemyPermissionRepository",
+    "SQLAlchemyRoleRepository",
+    "SQLAlchemyGroupRepository",
+    "SQLAlchemyAccountRepository",
+    "SQLAlchemyResourceRepository",
+]
+
+logger = logging.getLogger(__name__)
+
+
+class _SQLAlchemyBaseRepository:
+    """基类，注入会话。"""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+
+class SQLAlchemyPermissionRepository(_SQLAlchemyBaseRepository, PermissionRepository):
+    def add(self, permission: Permission) -> None:
+        # TODO: 将 Permission 映射到 ORM Model 并保存
+        self._session.add(permission)  # type: ignore[arg-type]
+        self._session.commit()
+
+    def get(self, permission_id: str) -> optional[Permission]:
+        # TODO: 根据 ID 查询 ORM 模型并转换为领域对象
+        raise NotImplementedError
+
+    def list(self, tenant_id: optional[str] = None) -> list[Permission]:
+        # TODO: 查询所有权限
+        raise NotImplementedError
+
+
+class SQLAlchemyRoleRepository(_SQLAlchemyBaseRepository, RoleRepository):
+    def add(self, role: Role) -> None:
+        self._session.add(role)  # type: ignore[arg-type]
+        self._session.commit()
+
+    def get(self, role_id: str) -> optional[Role]:
+        raise NotImplementedError
+
+    def list(self, tenant_id: optional[str] = None) -> list[Role]:
+        raise NotImplementedError
+
+    def assign_permission(self, role_id: str, permission_id: str) -> None:
+        # TODO: 插入关联表并提交
+        raise NotImplementedError
+
+
+class SQLAlchemyGroupRepository(_SQLAlchemyBaseRepository, GroupRepository):
+    def add(self, group: Group) -> None:
+        self._session.add(group)  # type: ignore[arg-type]
+        self._session.commit()
+
+    def get(self, group_id: str) -> optional[Group]:
+        raise NotImplementedError
+
+    def list(self, tenant_id: optional[str] = None) -> list[Group]:
+        raise NotImplementedError
+
+    def assign_role(self, group_id: str, role_id: str) -> None:
+        raise NotImplementedError
+
+
+class SQLAlchemyAccountRepository(_SQLAlchemyBaseRepository, AccountRepository):
+    def add(self, account: Account) -> None:
+        self._session.add(account)  # type: ignore[arg-type]
+        self._session.commit()
+
+    def get(self, account_id: str) -> optional[Account]:
+        raise NotImplementedError
+
+    def list(self, tenant_id: optional[str] = None) -> list[Account]:
+        raise NotImplementedError
+
+    def assign_role(self, account_id: str, role_id: str) -> None:
+        raise NotImplementedError
+
+    def assign_group(self, account_id: str, group_id: str) -> None:
+        raise NotImplementedError
+
+
+class SQLAlchemyResourceRepository(_SQLAlchemyBaseRepository, ResourceRepository):
+    def add(self, resource: Resource) -> None:
+        self._session.add(resource)  # type: ignore[arg-type]
+        self._session.commit()
+
+    def get(self, resource_id: str) -> optional[Resource]:
+        raise NotImplementedError
+
+    def list(self, tenant_id: optional[str] = None) -> list[Resource]:
+        raise NotImplementedError
+"""PostgreSQL 仓库实现。
+
+本模块提供各实体的 PostgreSQL 持久化实现，满足 ``storage.interface``
+中定义的各仓库协议。使用 psycopg2 驱动连接数据库，所有 SQL 都
+遵循参数化语法以防止 SQL 注入。数据库连接通过 ``Settings`` 中的
+``db_url`` 进行配置，支持动态替换。
+
+注意：此实现仅作为示例，并未对连接池、事务等高级特性做完整封装。
+在生产环境中建议使用 ``asyncpg``、``sqlalchemy`` 等库来管理连接池。
+"""
+
+from __future__ import annotations
+
+import logging
+import json
+import psycopg2
+from psycopg2.extras import RealdictCursor
+from typing import list, optional, Sequence
+
+from ..config import Settings
+from ..models import Account, Group, Permission, Resource, Role
+from .interface import (
+    AccountRepository,
+    GroupRepository,
+    PermissionRepository,
+    ResourceRepository,
+    RoleRepository,
+)
+
+__all__ = [
+    "PostgresDatabase",
+    "PostgresPermissionRepository",
+    "PostgresRoleRepository",
+    "PostgresGroupRepository",
+    "PostgresAccountRepository",
+    "PostgresResourceRepository",
+]
+
+logger = logging.getLogger(__name__)
+
+
+class PostgresDatabase:
+    """管理 PostgreSQL 连接。
+
+    该类封装了创建连接和获取游标的逻辑，使仓库实现可以专注于业务
+    SQL 而无需关心连接细节。连接配置通过 ``Settings`` 提供，初始化
+    后即可复用。如果需要连接池，请在此处扩展。
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealdictCursor)
+        self._conn.autocommit = True  # 简化示例，不建议在生产中使用 autocommit
+
+    def cursor(self):  # type: ignore[no-untyped-def]
+        return self._conn.cursor()
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+class _BaseRepository:
+    """Repository 基类，提供通用初始化和日志。"""
+
+    def __init__(self, db: PostgresDatabase) -> None:
+        self._db = db
+
+    def _log(self, message: str) -> None:
+        logger.debug(message)
+
+
+class PostgresPermissionRepository(_BaseRepository, PermissionRepository):
+    def add(self, permission: Permission) -> None:
+        sql = """
+            INSERT INTO permissions (id, name, description)
+            VALUES (%s, %s, %s)
+        """
+        self._log(f"Adding permission {permission.id}")
+        with self._db.cursor() as cur:
+            cur.execute(sql, (permission.id, permission.name, permission.description))
+
+    def get(self, permission_id: str) -> optional[Permission]:
+        sql = """
+            SELECT id, name, description
+            FROM permissions
+            WHERE id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (permission_id,))
+            row = cur.fetchone()
+            if row:
+                return Permission(_id=row["id"], _name=row["name"], _description=row["description"])  # type: ignore[call-arg]
+            return None
+
+    def list(self, tenant_id: optional[str] = None) -> list[Permission]:
+        # 权限表不区分租户，此处忽略 tenant_id
+        sql = """
+            SELECT id, name, description
+            FROM permissions
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+            return [
+                Permission(_id=row["id"], _name=row["name"], _description=row["description"])  # type: ignore[call-arg]
+                for row in rows
+            ]
+
+
+class PostgresRoleRepository(_BaseRepository, RoleRepository):
+    def add(self, role: Role) -> None:
+        sql = """
+            INSERT INTO roles (id, tenant_id, name, description)
+            VALUES (%s, %s, %s, %s)
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (role.id, role.tenant_id, role.name, role.description))
+
+    def get(self, role_id: str) -> optional[Role]:
+        sql = """
+            SELECT id, tenant_id, name, description
+            FROM roles
+            WHERE id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (role_id,))
+            row = cur.fetchone()
+            if row:
+                return Role(
+                    _id=row["id"],
+                    _tenant_id=row["tenant_id"],
+                    _name=row["name"],
+                    _description=row["description"],
+                    _permissions=self._fetch_role_permissions(role_id),
+                )
+            return None
+
+    def list(self, tenant_id: optional[str] = None) -> list[Role]:
+        sql = """
+            SELECT id, tenant_id, name, description
+            FROM roles
+        """
+        params: Sequence[object] = []
+        if tenant_id is not None:
+            sql += " WHERE tenant_id = %s"
+            params = [tenant_id]
+        with self._db.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            roles: list[Role] = []
+            for row in rows:
+                role_id = row["id"]
+                perms = self._fetch_role_permissions(role_id)
+                roles.append(
+                    Role(
+                        _id=row["id"],
+                        _tenant_id=row["tenant_id"],
+                        _name=row["name"],
+                        _description=row["description"],
+                        _permissions=perms,
+                    )
+                )
+            return roles
+
+    def assign_permission(self, role_id: str, permission_id: str) -> None:
+        sql = """
+            INSERT INTO role_permissions (role_id, permission_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (role_id, permission_id))
+
+    def _fetch_role_permissions(self, role_id: str) -> list[str]:
+        sql = """
+            SELECT permission_id
+            FROM role_permissions
+            WHERE role_id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (role_id,))
+            rows = cur.fetchall()
+            return [row["permission_id"] for row in rows]
+
+
+class PostgresGroupRepository(_BaseRepository, GroupRepository):
+    def add(self, group: Group) -> None:
+        sql = """
+            INSERT INTO groups (id, tenant_id, name, description)
+            VALUES (%s, %s, %s, %s)
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (group.id, group.tenant_id, group.name, group.description))
+
+    def get(self, group_id: str) -> optional[Group]:
+        sql = """
+            SELECT id, tenant_id, name, description
+            FROM groups
+            WHERE id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (group_id,))
+            row = cur.fetchone()
+            if row:
+                roles = self._fetch_group_roles(group_id)
+                return Group(
+                    _id=row["id"],
+                    _tenant_id=row["tenant_id"],
+                    _name=row["name"],
+                    _description=row["description"],
+                    _roles=roles,
+                )
+            return None
+
+    def list(self, tenant_id: optional[str] = None) -> list[Group]:
+        sql = """
+            SELECT id, tenant_id, name, description
+            FROM groups
+        """
+        params: Sequence[object] = []
+        if tenant_id is not None:
+            sql += " WHERE tenant_id = %s"
+            params = [tenant_id]
+        with self._db.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            groups: list[Group] = []
+            for row in rows:
+                group_id = row["id"]
+                roles = self._fetch_group_roles(group_id)
+                groups.append(
+                    Group(
+                        _id=row["id"],
+                        _tenant_id=row["tenant_id"],
+                        _name=row["name"],
+                        _description=row["description"],
+                        _roles=roles,
+                    )
+                )
+            return groups
+
+    def assign_role(self, group_id: str, role_id: str) -> None:
+        sql = """
+            INSERT INTO group_roles (group_id, role_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (group_id, role_id))
+
+    def _fetch_group_roles(self, group_id: str) -> list[str]:
+        sql = """
+            SELECT role_id
+            FROM group_roles
+            WHERE group_id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (group_id,))
+            rows = cur.fetchall()
+            return [row["role_id"] for row in rows]
+
+
+class PostgresAccountRepository(_BaseRepository, AccountRepository):
+    def add(self, account: Account) -> None:
+        sql = """
+            INSERT INTO accounts (id, tenant_id, username, email)
+            VALUES (%s, %s, %s, %s)
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account.id, account.tenant_id, account.username, account.email))
+
+    def get(self, account_id: str) -> optional[Account]:
+        sql = """
+            SELECT id, tenant_id, username, email
+            FROM accounts
+            WHERE id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account_id,))
+            row = cur.fetchone()
+            if row:
+                roles = self._fetch_account_roles(account_id)
+                groups = self._fetch_account_groups(account_id)
+                return Account(
+                    _id=row["id"],
+                    _username=row["username"],
+                    _email=row["email"],
+                    _tenant_id=row["tenant_id"],
+                    _roles=roles,
+                    _groups=groups,
+                )
+            return None
+
+    def list(self, tenant_id: optional[str] = None) -> list[Account]:
+        sql = """
+            SELECT id, tenant_id, username, email
+            FROM accounts
+        """
+        params: Sequence[object] = []
+        if tenant_id is not None:
+            sql += " WHERE tenant_id = %s"
+            params = [tenant_id]
+        with self._db.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            accounts: list[Account] = []
+            for row in rows:
+                account_id = row["id"]
+                roles = self._fetch_account_roles(account_id)
+                groups = self._fetch_account_groups(account_id)
+                accounts.append(
+                    Account(
+                        _id=row["id"],
+                        _username=row["username"],
+                        _email=row["email"],
+                        _tenant_id=row["tenant_id"],
+                        _roles=roles,
+                        _groups=groups,
+                    )
+                )
+            return accounts
+
+    def assign_role(self, account_id: str, role_id: str) -> None:
+        sql = """
+            INSERT INTO user_roles (account_id, role_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account_id, role_id))
+
+    def assign_group(self, account_id: str, group_id: str) -> None:
+        sql = """
+            INSERT INTO user_groups (account_id, group_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account_id, group_id))
+
+    def _fetch_account_roles(self, account_id: str) -> list[str]:
+        sql = """
+            SELECT role_id
+            FROM user_roles
+            WHERE account_id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account_id,))
+            return [row["role_id"] for row in cur.fetchall()]
+
+    def _fetch_account_groups(self, account_id: str) -> list[str]:
+        sql = """
+            SELECT group_id
+            FROM user_groups
+            WHERE account_id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (account_id,))
+            return [row["group_id"] for row in cur.fetchall()]
+
+
+class PostgresResourceRepository(_BaseRepository, ResourceRepository):
+    def add(self, resource: Resource) -> None:
+        sql = """
+            INSERT INTO resources (id, type, name, tenant_id, owner_id, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        metadata_str = json.dumps(resource.metadata)  # type: ignore[name-defined]
+        with self._db.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    resource.id,
+                    resource.type,
+                    resource.name,
+                    resource.tenant_id,
+                    resource.owner_id,
+                    metadata_str,
+                ),
+            )
+
+    def get(self, resource_id: str) -> optional[Resource]:
+        sql = """
+            SELECT id, type, name, tenant_id, owner_id, metadata
+            FROM resources
+            WHERE id = %s
+        """
+        with self._db.cursor() as cur:
+            cur.execute(sql, (resource_id,))
+            row = cur.fetchone()
+            if row:
+                meta = row["metadata"]
+                if isinstance(meta, str):
+                    try:
+                        import json
+                        metadata_dict = json.loads(meta)
+                    except Exception:
+                        metadata_dict = {}
+                else:
+                    metadata_dict = meta or {}
+                return Resource(
+                    _id=row["id"],
+                    _type=row["type"],
+                    _name=row["name"],
+                    _tenant_id=row["tenant_id"],
+                    _owner_id=row["owner_id"],
+                    _metadata=metadata_dict,
+                )
+            return None
+
+    def list(self, tenant_id: optional[str] = None) -> list[Resource]:
+        sql = """
+            SELECT id, type, name, tenant_id, owner_id, metadata
+            FROM resources
+        """
+        params: Sequence[object] = []
+        if tenant_id is not None:
+            sql += " WHERE tenant_id = %s"
+            params = [tenant_id]
+        with self._db.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            resources: list[Resource] = []
+            for row in rows:
+                meta = row["metadata"]
+                if isinstance(meta, str):
+                    try:
+                        import json
+                        metadata_dict = json.loads(meta)
+                    except Exception:
+                        metadata_dict = {}
+                else:
+                    metadata_dict = meta or {}
+                resources.append(
+                    Resource(
+                        _id=row["id"],
+                        _type=row["type"],
+                        _name=row["name"],
+                        _tenant_id=row["tenant_id"],
+                        _owner_id=row["owner_id"],
+                        _metadata=metadata_dict,
+                    )
+                )
+            return resources
+# backend/storage/sqlalchemy_repository.py
+from __future__ import annotations
+import uuid
+from typing import list, optional
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from ..db import AccountModel, GroupModel, PermissionModel, ResourceModel, RoleModel
+from ..models import Account, Group, Permission, Resource, Role
+from .interface import AccountRepository, GroupRepository, PermissionRepository, ResourceRepository, RoleRepository
+
+__all__ = [
+    "SQLAlchemyPermissionRepository", "SQLAlchemyRoleRepository", "SQLAlchemyGroupRepository",
+    "SQLAlchemyAccountRepository", "SQLAlchemyResourceRepository", "AuditLogRepository",
+]
+
+class _BaseRepo:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+# ---- Permission ----
+class SQLAlchemyPermissionRepository(_BaseRepo, PermissionRepository):
+    async def add(self, permission: Permission) -> None:
+        self._session.add(PermissionModel(id=uuid.UUID(permission.id), name=permission.name, description=permission.description))
+        await self._session.commit()
+
+    async def get(self, permission_id: str) -> optional[Permission]:
+        obj = await self._session.get(PermissionModel, uuid.UUID(permission_id))
+        return None if not obj else Permission(_id=str(obj.id), _name=obj.name, _description=obj.description or "")
+
+    async def list(self, tenant_id: optional[str] = None) -> list[Permission]:
+        res = await self._session.execute(select(PermissionModel))
+        return [Permission(_id=str(o.id), _name=o.name, _description=o.description or "") for o in res.scalars().all()]
+
+    async def delete(self, permission_id: str) -> bool:
+        obj = await self._session.get(PermissionModel, uuid.UUID(permission_id))
+        if not obj:
+            return False
+        await self._session.delete(obj)
+        await self._session.commit()
+        return True
+
+# ---- Role ----
+class SQLAlchemyRoleRepository(_BaseRepo, RoleRepository):
+    async def add(self, role: Role) -> None:
+        self._session.add(RoleModel(id=uuid.UUID(role.id), tenant_id=role.tenant_id, name=role.name, description=role.description))
+        await self._session.commit()
+
+    async def get(self, role_id: str) -> optional[Role]:
+        stmt = select(RoleModel).where(RoleModel.id == uuid.UUID(role_id)).options(selectinload(RoleModel.permissions))
+        obj = (await self._session.execute(stmt)).scalars().first()
+        if not obj:
+            return None
+        return Role(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name, _description=obj.description or "",
+                    _permissions=[str(p.id) for p in obj.permissions])
+
+    async def list(self, tenant_id: optional[str] = None) -> list[Role]:
+        stmt = select(RoleModel).options(selectinload(RoleModel.permissions))
+        if tenant_id is not None:
+            stmt = stmt.where(RoleModel.tenant_id == tenant_id)
+        res = await self._session.execute(stmt)
+        out: list[Role] = []
+        for obj in res.scalars().all():
+            out.append(Role(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
+                            _description=obj.description or "", _permissions=[str(p.id) for p in obj.permissions]))
+        return out
+
+    async def delete(self, role_id: str) -> bool:
+        obj = await self._session.get(RoleModel, uuid.UUID(role_id))
+        if not obj:
+            return False
+        await self._session.delete(obj)
+        await self._session.commit()
+        return True
+
+    async def assign_permission(self, role_id: str, permission_id: str) -> None:
+        role = await self._session.get(RoleModel, uuid.UUID(role_id), options=[selectinload(RoleModel.permissions)])
+        perm = await self._session.get(PermissionModel, uuid.UUID(permission_id))
+        if not role or not perm:
+            raise ValueError("role or permission not found")
+        if perm not in role.permissions:
+            role.permissions.append(perm)
+            await self._session.commit()
+
+    async def remove_permission(self, role_id: str, permission_id: str) -> None:
+        role = await self._session.get(RoleModel, uuid.UUID(role_id), options=[selectinload(RoleModel.permissions)])
+        perm = await self._session.get(PermissionModel, uuid.UUID(permission_id))
+        if not role or not perm:
+            raise ValueError("role or permission not found")
+        if perm in role.permissions:
+            role.permissions.remove(perm)
+            await self._session.commit()
+
+# ---- Group ----
+class SQLAlchemyGroupRepository(_BaseRepo, GroupRepository):
+    async def add(self, group: Group) -> None:
+        self._session.add(GroupModel(id=uuid.UUID(group.id), tenant_id=group.tenant_id, name=group.name, description=group.description))
+        await self._session.commit()
+
+    async def get(self, group_id: str) -> optional[Group]:
+        stmt = select(GroupModel).where(GroupModel.id == uuid.UUID(group_id)).options(selectinload(GroupModel.roles))
+        obj = (await self._session.execute(stmt)).scalars().first()
+        if not obj:
+            return None
+        return Group(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
+                     _description=obj.description or "", _roles=[str(r.id) for r in obj.roles])
+
+    async def list(self, tenant_id: optional[str] = None) -> list[Group]:
+        stmt = select(GroupModel).options(selectinload(GroupModel.roles))
+        if tenant_id is not None:
+            stmt = stmt.where(GroupModel.tenant_id == tenant_id)
+        res = await self._session.execute(stmt)
+        out: list[Group] = []
+        for obj in res.scalars().all():
+            out.append(Group(_id=str(obj.id), _tenant_id=obj.tenant_id, _name=obj.name,
+                             _description=obj.description or "", _roles=[str(r.id) for r in obj.roles]))
+        return out
+
+    async def delete(self, group_id: str) -> bool:
+        obj = await self._session.get(GroupModel, uuid.UUID(group_id))
+        if not obj:
+            return False
+        await self._session.delete(obj)
+        await self._session.commit()
+        return True
+
+    async def assign_role(self, group_id: str, role_id: str) -> None:
+        grp = await self._session.get(GroupModel, uuid.UUID(group_id), options=[selectinload(GroupModel.roles)])
+        role = await self._session.get(RoleModel, uuid.UUID(role_id))
+        if not grp or not role:
+            raise ValueError("group or role not found")
+        if role not in grp.roles:
+            grp.roles.append(role)
+            await self._session.commit()
+
+    async def remove_role(self, group_id: str, role_id: str) -> None:
+        grp = await self._session.get(GroupModel, uuid.UUID(group_id), options=[selectinload(GroupModel.roles)])
+        role = await self._session.get(RoleModel, uuid.UUID(role_id))
+        if not grp or not role:
+            raise ValueError("group or role not found")
+        if role in grp.roles:
+            grp.roles.remove(role)
+            await self._session.commit()
+
+# ---- Account ----
+class SQLAlchemyAccountRepository(_BaseRepo, AccountRepository):
+    async def add(self, account: Account) -> None:
+        self._session.add(AccountModel(id=uuid.UUID(account.id), tenant_id=account.tenant_id, username=account.username, email=account.email))
+        await self._session.commit()
+
+    async def get(self, account_id: str) -> optional[Account]:
+        stmt = select(AccountModel).where(AccountModel.id == uuid.UUID(account_id)).options(selectinload(AccountModel.roles), selectinload(AccountModel.groups))
+        obj = (await self._session.execute(stmt)).scalars().first()
+        if not obj:
+            return None
+        return Account(_id=str(obj.id), _username=obj.username, _email=obj.email, _tenant_id=obj.tenant_id,
+                       _roles=[str(r.id) for r in obj.roles], _groups=[str(g.id) for g in obj.groups])
+
+    async def list(self, tenant_id: optional[str] = None) -> list[Account]:
+        stmt = select(AccountModel).options(selectinload(AccountModel.roles), selectinload(AccountModel.groups))
+        if tenant_id is not None:
+            stmt = stmt.where(AccountModel.tenant_id == tenant_id)
+        res = await self._session.execute(stmt)
+        out: list[Account] = []
+        for obj in res.scalars().all():
+            out.append(Account(_id=str(obj.id), _username=obj.username, _email=obj.email, _tenant_id=obj.tenant_id,
+                               _roles=[str(r.id) for r in obj.roles], _groups=[str(g.id) for g in obj.groups]))
+        return out
+
+    async def delete(self, account_id: str) -> bool:
+        obj = await self._session.get(AccountModel, uuid.UUID(account_id))
+        if not obj:
+            return False
+        await self._session.delete(obj)
+        await self._session.commit()
+        return True
+
+    async def assign_role(self, account_id: str, role_id: str) -> None:
+        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.roles)])
+        role = await self._session.get(RoleModel, uuid.UUID(role_id))
+        if not acc or not role:
+            raise ValueError("account or role not found")
+        if role not in acc.roles:
+            acc.roles.append(role)
+            await self._session.commit()
+
+    async def remove_role(self, account_id: str, role_id: str) -> None:
+        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.roles)])
+        role = await self._session.get(RoleModel, uuid.UUID(role_id))
+        if not acc or not role:
+            raise ValueError("account or role not found")
+        if role in acc.roles:
+            acc.roles.remove(role)
+            await self._session.commit()
+
+    async def assign_group(self, account_id: str, group_id: str) -> None:
+        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.groups)])
+        grp = await self._session.get(GroupModel, uuid.UUID(group_id))
+        if not acc or not grp:
+            raise ValueError("account or group not found")
+        if grp not in acc.groups:
+            acc.groups.append(grp)
+            await self._session.commit()
+
+    async def remove_group(self, account_id: str, group_id: str) -> None:
+        acc = await self._session.get(AccountModel, uuid.UUID(account_id), options=[selectinload(AccountModel.groups)])
+        grp = await self._session.get(GroupModel, uuid.UUID(group_id))
+        if not acc or not grp:
+            raise ValueError("account or group not found")
+        if grp in acc.groups:
+            acc.groups.remove(grp)
+            await self._session.commit()
+
+# ---- Resource ----
+class SQLAlchemyResourceRepository(_BaseRepo, ResourceRepository):
+    async def add(self, resource: Resource) -> None:
+        self._session.add(ResourceModel(
+            id=uuid.UUID(resource.id),
+            type=resource.type,
+            name=resource.name,
+            tenant_id=resource.tenant_id,
+            owner_id=uuid.UUID(resource.owner_id) if resource.owner_id else None,
+            resource_metadata=resource.metadata,   # ✅ 修复字段名
+        ))
+        await self._session.commit()
+
+    async def get(self, resource_id: str) -> optional[Resource]:
+        obj = await self._session.get(ResourceModel, uuid.UUID(resource_id))
+        if not obj:
+            return None
+        return Resource(_id=str(obj.id), _type=obj.type, _name=obj.name, _tenant_id=obj.tenant_id,
+                        _owner_id=str(obj.owner_id) if obj.owner_id else None,
+                        _metadata=obj.resource_metadata or {})
+
+    async def list(self, tenant_id: optional[str] = None) -> list[Resource]:
+        stmt = select(ResourceModel)
+        if tenant_id is not None:
+            stmt = stmt.where(ResourceModel.tenant_id == tenant_id)
+        res = await self._session.execute(stmt)
+        return [Resource(_id=str(o.id), _type=o.type, _name=o.name, _tenant_id=o.tenant_id,
+                         _owner_id=str(o.owner_id) if o.owner_id else None,
+                         _metadata=o.resource_metadata or {}) for o in res.scalars().all()]
+
+    async def delete(self, resource_id: str) -> bool:
+        obj = await self._session.get(ResourceModel, uuid.UUID(resource_id))
+        if not obj:
+            return False
+        await self._session.delete(obj)
+        await self._session.commit()
+        return True
+# backend/storage/interface.py
+from __future__ import annotations
+from typing import Protocol, runtime_checkable, optional, list
+from ..models import Account, Group, Permission, Resource, Role
+
+__all__ = [
+    "PermissionRepository", "RoleRepository", "GroupRepository",
+    "AccountRepository", "ResourceRepository",
+]
+
+@runtime_checkable
+class PermissionRepository(Protocol):
+    async def add(self, permission: Permission) -> None: ...
+    async def get(self, permission_id: str) -> optional[Permission]: ...
+    async def list(self, tenant_id: optional[str] = None) -> list[Permission]: ...
+    async def delete(self, permission_id: str) -> bool: ...
+
+@runtime_checkable
+class RoleRepository(Protocol):
+    async def add(self, role: Role) -> None: ...
+    async def get(self, role_id: str) -> optional[Role]: ...
+    async def list(self, tenant_id: optional[str] = None) -> list[Role]: ...
+    async def delete(self, role_id: str) -> bool: ...
+    async def assign_permission(self, role_id: str, permission_id: str) -> None: ...
+    async def remove_permission(self, role_id: str, permission_id: str) -> None: ...
+
+@runtime_checkable
+class GroupRepository(Protocol):
+    async def add(self, group: Group) -> None: ...
+    async def get(self, group_id: str) -> optional[Group]: ...
+    async def list(self, tenant_id: optional[str] = None) -> list[Group]: ...
+    async def delete(self, group_id: str) -> bool: ...
+    async def assign_role(self, group_id: str, role_id: str) -> None: ...
+    async def remove_role(self, group_id: str, role_id: str) -> None: ...
+
+@runtime_checkable
+class AccountRepository(Protocol):
+    async def add(self, account: Account) -> None: ...
+    async def get(self, account_id: str) -> optional[Account]: ...
+    async def list(self, tenant_id: optional[str] = None) -> list[Account]: ...
+    async def delete(self, account_id: str) -> bool: ...
+    async def assign_role(self, account_id: str, role_id: str) -> None: ...
+    async def remove_role(self, account_id: str, role_id: str) -> None: ...
+    async def assign_group(self, account_id: str, group_id: str) -> None: ...
+    async def remove_group(self, account_id: str, group_id: str) -> None: ...
+
+@runtime_checkable
+class ResourceRepository(Protocol):
+    async def add(self, resource: Resource) -> None: ...
+    async def get(self, resource_id: str) -> optional[Resource]: ...
+    async def list(self, tenant_id: optional[str] = None) -> list[Resource]: ...
+    async def delete(self, resource_id: str) -> bool: ...
+"""账户实体定义。
+
+账户（Account）代表一个登录用户，可以直接绑定角色或加入用户组。支持
+租户隔离，一个账户只能属于一个租户（或无租户，即平台管理员）。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Optional
+
+__all__ = ["Account"]
+
+
+@dataclass(slots=True)
+class Account:
+    _id: str
+    _username: str
+    _email: str
+    _tenant_id: Optional[str]
+    _roles: list[str]
+    _groups: list[str]
+
+    @classmethod
+    def create(cls, username: str, email: str, tenant_id: Optional[str] = None) -> "Account":
+        if not username:
+            raise ValueError("username must not be empty")
+        if not email or "@" not in email:
+            raise ValueError("invalid email")
+        return cls(
+            _id = str(uuid.uuid4()),
+            _username = username,
+            _email = email,
+            _tenant_id = tenant_id,
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @property
+    def email(self) -> str:
+        return self._email
+
+    @property
+    def tenant_id(self) -> Optional[str]:
+        return self._tenant_id
+
+    @property
+    def roles(self) -> list[str]:
+        return list(self._roles)
+
+    @property
+    def groups(self) -> list[str]:
+        return list(self._groups)
+
+    def add_role(self, role_id: str) -> None:
+        if role_id not in self._roles:
+            self._roles.append(role_id)
+
+    def remove_role(self, role_id: str) -> None:
+        if role_id in self._roles:
+            self._roles.remove(role_id)
+
+    def add_group(self, group_id: str) -> None:
+        if group_id not in self._groups:
+            self._groups.append(group_id)
+
+    def remove_group(self, group_id: str) -> None:
+        if group_id in self._groups:
+            self._groups.remove(group_id)
+"""用户组实体定义。
+
+用户组（部门）可用于集中授予角色，实现批量权限管理。支持租户
+隔离，不同租户的用户组互不影响。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from typing import Optional
+
+__all__ = ["Group"]
+
+
+@dataclass(slots=True)
+class Group:
+    _id: str
+    _tenant_id: Optional[str]
+    _name: str
+    _description: str
+    _roles: list[str]
+
+    @classmethod
+    def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Group":
+        if not name:
+            raise ValueError("group name must not be empty")
+        return cls(
+            _id = str(uuid.uuid4()),
+            _tenant_id = tenant_id,
+            _name = name,
+            _description = description or "",
+            _roles = [],
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def tenant_id(self) -> Optional[str]:
+        return self._tenant_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def roles(self) -> list[str]:
+        return self._roles.copy()
+
+    def add_role(self, role_id: str) -> None:
+        if role_id not in self._roles:
+            self._roles.append(role_id)
+
+    def remove_role(self, role_id: str) -> None:
+        if role_id in self._roles:
+            self._roles.remove(role_id)
+"""角色实体定义。
+
+角色用于汇聚一组权限，并可以被多个账户或用户组绑定。支持租户隔离，
+一个角色只能属于一个租户（也可以是全局角色，tenant_id 为 None）。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import list, optional
+
+__all__ = ["Role"]
+
+
+@dataclass(slots=True)
+class Role:
+    """角色数据类。"""
+
+    _id: str
+    _tenant_id: optional[str]
+    _name: str
+    _description: str
+    _permissions: list[str] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, tenant_id: optional[str], name: str, description: str) -> "Role":
+        if not name:
+            raise ValueError("role name must not be empty")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _tenant_id=tenant_id,
+            _name=name,
+            _description=description or "",
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def tenant_id(self) -> optional[str]:
+        return self._tenant_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def permissions(self) -> list[str]:
+        return list(self._permissions)
+
+    def add_permission(self, permission_id: str) -> None:
+        if permission_id not in self._permissions:
+            self._permissions.append(permission_id)
+
+    def remove_permission(self, permission_id: str) -> None:
+        if permission_id in self._permissions:
+            self._permissions.remove(permission_id)
+"""模型子包。
+
+此包包含应用域内的实体类，包括 ``Permission``、``Role``、``Group``、
+``Account``、``Resource`` 以及若干用于接口交互的 Pydantic 模型。
+
+使用 ``from AuthOne.models import Permission`` 导入实体类。
+"""
+
+from __future__ import annotations
+
+from .permission import Permission
+from .role import Role
+from .group import Group
+from .account import Account
+from .resource import Resource
+from .pydantic_models import AccessCheckRequest, AccessCheckResponse
+
+__all__: list[str] = [
+    "Permission",
+    "Role",
+    "Group",
+    "Account",
+    "Resource",
+    "AccessCheckRequest",
+    "AccessCheckResponse",
+]
+"""Pydantic 模型定义。
+
+用于对外接口的请求和响应模型，确保输入参数的有效性和输出格式的一致性。
+"""
+
+from __future__ import annotations
+
+from typing import optional
+
+from pydantic import BaseModel, Field, validator
+
+__all__ = ["AccessCheckRequest", "AccessCheckResponse"]
+
+
+class AccessCheckRequest(BaseModel):
+    """权限校验请求模型。"""
+
+    account_id: str = Field(..., description="账户 ID")
+    resource: str = Field(..., description="资源名称（组件、模块、数据集等）")
+    action: str = Field(..., description="操作名称，如 create/read/delete")
+    tenant_id: optional[str] = Field(None, description="租户 ID，可为空")
+
+    @validator("account_id", "resource", "action")
+    def _not_empty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("must not be empty")
+        return v
+
+
+class AccessCheckResponse(BaseModel):
+    """权限校验响应模型。"""
+
+    allowed: bool = Field(..., description="是否允许访问")
+    reason: optional[str] = Field(None, description="拒绝原因")
+"""资源实体定义。
+
+资源代表 AI 平台中的前端组件、后端模块、数据集或模型等受控对象。
+通过 ``Resource`` 可以对不同类型的资源进行统一管理，并在权限检查
+中提供必要的信息（如所属租户、拥有者）。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import dict, optional
+
+__all__ = ["Resource"]
+
+
+@dataclass(slots=True)
+class Resource:
+    """资源数据类。"""
+
+    _id: str
+    _type: str
+    _name: str
+    _tenant_id: optional[str]
+    _owner_id: optional[str]
+    _metadata: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def create(
+        cls,
+        resource_type: str,
+        name: str,
+        tenant_id: optional[str],
+        owner_id: optional[str],
+        metadata: optional[dict[str, str]] = None,
+    ) -> "Resource":
+        if not resource_type:
+            raise ValueError("resource type must not be empty")
+        if not name:
+            raise ValueError("resource name must not be empty")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _type=resource_type,
+            _name=name,
+            _tenant_id=tenant_id,
+            _owner_id=owner_id,
+            _metadata=metadata or {},
+        )
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def type(self) -> str:
+        return self._type
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def tenant_id(self) -> optional[str]:
+        return self._tenant_id
+
+    @property
+    def owner_id(self) -> optional[str]:
+        return self._owner_id
+
+    @property
+    def metadata(self) -> dict[str, str]:
+        return dict(self._metadata)
+"""权限实体定义。
+
+``Permission`` 用于表示系统中的访问许可，它采用 ``resource:action``
+形式标识具体资源与操作，例如 ``app:create`` 或 ``dataset:view``。该
+模块提供了权限实体的创建、解析和属性访问功能。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from typing import Tuple
+
+__all__ = ["Permission"]
+
+
+@dataclass(slots=True)
+class Permission:
+    """权限数据类。
+
+    使用 ``@dataclass`` 定义不可变字段，通过 ``create`` 方法进行实例化并
+    进行基础校验。所有字段私有，并通过属性公开，只读访问。
+    """
+
+    _id: str
+    _name: str
+    _description: str
+
+    @classmethod
+    def create(cls, name: str, description: str) -> "Permission":
+        """创建一个权限。
+
+        :param name: 权限名称，必须包含 ``:`` 分隔资源与动作
+        :param description: 描述
+        :returns: 权限对象
+        :raises ValueError: 当 name 为空或格式不正确
+        """
+        if not name:
+            raise ValueError("permission name must not be empty")
+        if ":" not in name:
+            raise ValueError("permission name must be in format resource:action")
+        return cls(
+            _id=str(uuid.uuid4()),
+            _name=name,
+            _description=description or "",
+        )
+
+    @property
+    def id(self) -> str:
+        """权限的唯一标识符。"""
+        return self._id
+
+    @property
+    def name(self) -> str:
+        """权限的机器可读名称。"""
+        return self._name
+
+    @property
+    def description(self) -> str:
+        """权限的人类可读描述。"""
+        return self._description
+
+    def parse(self) -> Tuple[str, str]:
+        """解析权限名称为 ``(resource, action)`` 元组。"""
+        resource, action = self._name.split(":", 1)
+        return resource, action
+"""版本信息模块。
+
+此模块定义包的版本号。修改版本号请遵循语义化版本约定。
+"""
+
+from __future__ import annotations
+
+__all__ = ["__version__"]
+
+__version__: str = "0.1.0"
+# backend/service/auth_service.py
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, List
+import asyncio
+
+from ..db import get_session
+from ..models import Account, Group, Permission, Resource, Role, AccessCheckRequest, AccessCheckResponse
+from ..storage.sqlalchemy_repository import (
+    SQLAlchemyAccountRepository, SQLAlchemyGroupRepository, SQLAlchemyPermissionRepository,
+    SQLAlchemyResourceRepository, SQLAlchemyRoleRepository, AuditLogRepository
+)
+from ..core.casbin_adapter import CasbinEngine
+
+__all__ = ["AuthService"]
+
+@dataclass(slots=True)
+class AuthService:
+    _perm_repo: SQLAlchemyPermissionRepository
+    _role_repo: SQLAlchemyRoleRepository
+    _group_repo: SQLAlchemyGroupRepository
+    _account_repo: SQLAlchemyAccountRepository
+    _resource_repo: SQLAlchemyResourceRepository
+    _audit_repo: AuditLogRepository
+    _casbin: CasbinEngine
+
+    @classmethod
+    async def create(cls, casbin: CasbinEngine) -> "AuthService":
+        session = get_session()
+        return cls(
+            _perm_repo=SQLAlchemyPermissionRepository(session),
+            _role_repo=SQLAlchemyRoleRepository(session),
+            _group_repo=SQLAlchemyGroupRepository(session),
+            _account_repo=SQLAlchemyAccountRepository(session),
+            _resource_repo=SQLAlchemyResourceRepository(session),
+            _audit_repo=AuditLogRepository(session),
+            _casbin=casbin,
+        )
+
+    # ----------------- 工具：租户校验 -----------------
+    @staticmethod
+    def _tenant_compatible(a: Optional[str], b: Optional[str]) -> bool:
+        # None 代表“全局” —— 与任何租户兼容；否则必须完全相等
+        return a is None or b is None or a == b
+
+    # ----------------- 创建 -----------------
+    async def create_permission(self, name: str, description: str = "") -> Permission:
+        perm = Permission.create(name, description)
+        await self._perm_repo.add(perm)
+        return perm
+
+    async def create_role(self, tenant_id: Optional[str], name: str, description: str = "") -> Role:
+        role = Role.create(tenant_id, name, description)
+        await self._role_repo.add(role)
+        return role
+
+    async def create_group(self, tenant_id: Optional[str], name: str, description: str = "") -> Group:
+        grp = Group.create(tenant_id, name, description)
+        await self._group_repo.add(grp)
+        return grp
+
+    async def create_account(self, username: str, email: str, tenant_id: Optional[str] = None) -> Account:
+        acc = Account.create(username, email, tenant_id)
+        await self._account_repo.add(acc)
+        return acc
+
+    async def create_resource(self, resource_type: str, name: str, tenant_id: Optional[str], owner_id: Optional[str], metadata: Optional[dict] = None) -> Resource:
+        res = Resource.create(resource_type, name, tenant_id, owner_id, metadata or {})
+        await self._resource_repo.add(res)
+        return res
+
+    # ----------------- 查询 -----------------
+    async def list_permissions(self) -> List[Permission]:
+        return await self._perm_repo.list()
+
+    async def list_roles(self, tenant_id: Optional[str] = None) -> List[Role]:
+        return await self._role_repo.list(tenant_id)
+
+    async def list_groups(self, tenant_id: Optional[str] = None) -> List[Group]:
+        return await self._group_repo.list(tenant_id)
+
+    async def list_accounts(self, tenant_id: Optional[str] = None) -> List[Account]:
+        return await self._account_repo.list(tenant_id)
+
+    async def list_resources(self, tenant_id: Optional[str] = None) -> List[Resource]:
+        return await self._resource_repo.list(tenant_id)
+
+    # ----------------- 绑定 -----------------
+    async def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
+        role = await self._role_repo.get(role_id)
+        perm = await self._perm_repo.get(permission_id)
+        if not role or not perm:
+            raise ValueError("role or permission not found")
+        # 角色租户无需与权限一致（权限全局），此处不校验
+        await self._role_repo.assign_permission(role_id, permission_id)
+        res, act = perm.parse()
+        await asyncio.to_thread(self._casbin.add_permission_for_user, role.id, role.tenant_id, res, act)
+
+    async def assign_role_to_account(self, account_id: str, role_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        role = await self._role_repo.get(role_id)
+        if not acc or not role:
+            raise ValueError("account or role not found")
+        if not self._tenant_compatible(acc.tenant_id, role.tenant_id):
+            await self._audit_repo.record(account_id=acc.id, action="assign_role", resource=role.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign role across tenants")
+        await self._account_repo.assign_role(account_id, role_id)
+        await asyncio.to_thread(self._casbin.add_role_for_account, acc.id, acc.tenant_id, role.id)
+
+    async def assign_role_to_group(self, group_id: str, role_id: str) -> None:
+        grp = await self._group_repo.get(group_id)
+        role = await self._role_repo.get(role_id)
+        if not grp or not role:
+            raise ValueError("group or role not found")
+        if not self._tenant_compatible(grp.tenant_id, role.tenant_id):
+            await self._audit_repo.record(account_id="system", action="assign_role_to_group", resource=role.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign role across tenants")
+        await self._group_repo.assign_role(group_id, role_id)
+        await asyncio.to_thread(self._casbin.add_role_for_group, grp.id, grp.tenant_id, role.id)
+
+    async def assign_group_to_account(self, account_id: str, group_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        grp = await self._group_repo.get(group_id)
+        if not acc or not grp:
+            raise ValueError("account or group not found")
+        if not self._tenant_compatible(acc.tenant_id, grp.tenant_id):
+            await self._audit_repo.record(account_id=acc.id, action="assign_group", resource=grp.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign group across tenants")
+        await self._account_repo.assign_group(account_id, group_id)
+        await asyncio.to_thread(self._casbin.add_group_for_account, acc.id, acc.tenant_id, grp.id)
+
+    # ----------------- 解绑（新增） -----------------
+    async def remove_permission_from_role(self, role_id: str, permission_id: str) -> None:
+        role = await self._role_repo.get(role_id)
+        perm = await self._perm_repo.get(permission_id)
+        if not role or not perm:
+            raise ValueError("role or permission not found")
+        await self._role_repo.remove_permission(role_id, permission_id)
+        res, act = perm.parse()
+        await asyncio.to_thread(self._casbin.remove_permission_from_user, role.id, role.tenant_id, res, act)
+
+    async def remove_role_from_account(self, account_id: str, role_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        role = await self._role_repo.get(role_id)
+        if not acc or not role:
+            raise ValueError("account or role not found")
+        await self._account_repo.remove_role(account_id, role_id)
+        await asyncio.to_thread(self._casbin.remove_role_for_account, acc.id, acc.tenant_id, role.id)
+
+    async def remove_role_from_group(self, group_id: str, role_id: str) -> None:
+        grp = await self._group_repo.get(group_id)
+        role = await self._role_repo.get(role_id)
+        if not grp or not role:
+            raise ValueError("group or role not found")
+        await self._group_repo.remove_role(group_id, role_id)
+        await asyncio.to_thread(self._casbin.remove_role_for_group, grp.id, grp.tenant_id, role.id)
+
+    async def remove_group_from_account(self, account_id: str, group_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        grp = await self._group_repo.get(group_id)
+        if not acc or not grp:
+            raise ValueError("account or group not found")
+        await self._account_repo.remove_group(account_id, group_id)
+        await asyncio.to_thread(self._casbin.remove_group_for_account, acc.id, acc.tenant_id, grp.id)
+
+    # ----------------- 删除（新增，含策略清理） -----------------
+    async def delete_permission(self, permission_id: str) -> bool:
+        # 注意：删除权限不会自动从角色里移除对应资源动作的策略，这里仅删除记录
+        return await self._perm_repo.delete(permission_id)
+
+    async def delete_role(self, role_id: str) -> bool:
+        role = await self._role_repo.get(role_id)
+        if not role:
+            return False
+        ok = await self._role_repo.delete(role_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, role.id)
+        return ok
+
+    async def delete_group(self, group_id: str) -> bool:
+        grp = await self._group_repo.get(group_id)
+        if not grp:
+            return False
+        ok = await self._group_repo.delete(group_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, grp.id)
+        return ok
+
+    async def delete_account(self, account_id: str) -> bool:
+        acc = await self._account_repo.get(account_id)
+        if not acc:
+            return False
+        ok = await self._account_repo.delete(account_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, acc.id)
+        return ok
+
+    async def delete_resource(self, resource_id: str) -> bool:
+        return await self._resource_repo.delete(resource_id)
+
+    # ----------------- 权限校验（保留审计） -----------------
+    async def check_access(self, req: AccessCheckRequest) -> AccessCheckResponse:
+        allowed = await asyncio.to_thread(self._casbin.enforce, req.account_id, req.tenant_id, req.resource, req.action)
+        await self._audit_repo.record(account_id=req.account_id, action=req.action, resource=req.resource, result=allowed, message="allowed" if allowed else "denied")
+        return AccessCheckResponse(allowed=allowed, reason=None if allowed else "Access denied")
+"""服务子包。
+
+提供应用层服务类，如 ``AuthService``，封装业务逻辑。"""
+
+from __future__ import annotations
+
+from .auth_service import AuthService
+
+__all__: list[str] = ["AuthService"]
+# backend/api.py
+from __future__ import annotations
+from typing import Optional, List
+
+from fastapi import FastAPI, HTTPException, Path, status
+from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr
+
+from .db import init_engine, init_db, dispose_engine
+from .service import AuthService
+from .core.casbin_adapter import CasbinEngine
+
+# --------- Settings & CORS 来源（生产不要 *）---------
+ALLOWED_ORIGINS = []  # 从环境或配置加载
+app = FastAPI(title="AuthOne IAM Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],  # dev 时可 *
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+# --------- 请求体模型（契约化）---------
+class PermissionCreate(BaseModel):
+    name: str = Field(min_length=3)
+    description: str = Field(default="")
+
+class RoleCreate(BaseModel):
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class GroupCreate(BaseModel):
+    name: str
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class AccountCreate(BaseModel):
+    username: str
+    email: EmailStr
+    tenant_id: Optional[str] = None
+
+class ResourceCreate(BaseModel):
+    resource_type: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    owner_id: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+# --------- 生命周期：引擎与服务 ---------
+_svc: Optional[AuthService] = None
+
+@app.on_event("startup")
+async def startup() -> None:
+    global _svc
+    init_engine(db_url="sqlite+aiosqlite:///./app.db")  # 生产从环境读取
+    await init_db()
+    # 这里示意注入一个已构造好的 enforcer
+    import casbin
+    enforcer = casbin.Enforcer("rbac_model.conf", "rbac_policy.csv")  # 生产使用 adapter
+    _svc = await AuthService.create(CasbinEngine(enforcer))
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await dispose_engine()
+
+def _svc_required() -> AuthService:
+    if _svc is None:
+        raise RuntimeError("Service not initialized")
+    return _svc
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/docs")
+
+# --------- 基础 CRUD ---------
+@app.post("/permissions", status_code=status.HTTP_201_CREATED)
+async def create_permission(body: PermissionCreate):
+    svc = _svc_required()
+    p = await svc.create_permission(body.name, body.description)
+    return {"id": p.id, "name": p.name, "description": p.description}
+
+@app.delete("/permissions/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_permission(permission_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_permission(permission_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="permission not found")
+
+@app.post("/roles", status_code=status.HTTP_201_CREATED)
+async def create_role(body: RoleCreate):
+    svc = _svc_required()
+    r = await svc.create_role(body.tenant_id, body.name, body.description)
+    return {"id": r.id, "name": r.name, "tenant_id": r.tenant_id}
+
+@app.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(role_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_role(role_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="role not found")
+
+@app.post("/groups", status_code=status.HTTP_201_CREATED)
+async def create_group(body: GroupCreate):
+    svc = _svc_required()
+    g = await svc.create_group(body.tenant_id, body.name, body.description)
+    return {"id": g.id, "name": g.name, "tenant_id": g.tenant_id}
+
+@app.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(group_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_group(group_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="group not found")
+
+@app.post("/accounts", status_code=status.HTTP_201_CREATED)
+async def create_account(body: AccountCreate):
+    svc = _svc_required()
+    a = await svc.create_account(body.username, str(body.email), body.tenant_id)
+    return {"id": a.id, "username": a.username, "tenant_id": a.tenant_id}
+
+@app.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(account_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_account(account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="account not found")
+
+@app.post("/resources", status_code=status.HTTP_201_CREATED)
+async def create_resource(body: ResourceCreate):
+    svc = _svc_required()
+    r = await svc.create_resource(body.resource_type, body.name, body.tenant_id, body.owner_id, body.metadata)
+    return {"id": r.id, "name": r.name, "type": r.type, "tenant_id": r.tenant_id}
+
+@app.delete("/resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_resource(resource_id: str):
+    svc = _svc_required()
+    ok = await svc.delete_resource(resource_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="resource not found")
+
+# --------- 关系绑定 / 解绑 ---------
+@app.post("/roles/{role_id}/permissions/{permission_id}")
+async def assign_permission_to_role(role_id: str, permission_id: str):
+    svc = _svc_required()
+    try:
+        await svc.assign_permission_to_role(role_id, permission_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.delete("/roles/{role_id}/permissions/{permission_id}")
+async def remove_permission_from_role(role_id: str, permission_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_permission_from_role(role_id, permission_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.post("/accounts/{account_id}/roles/{role_id}")
+async def assign_role_to_account(account_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.assign_role_to_account(account_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.delete("/accounts/{account_id}/roles/{role_id}")
+async def remove_role_from_account(account_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_role_from_account(account_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.post("/groups/{group_id}/roles/{role_id}")
+async def assign_role_to_group(group_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.assign_role_to_group(group_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.delete("/groups/{group_id}/roles/{role_id}")
+async def remove_role_from_group(group_id: str, role_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_role_from_group(group_id, role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.post("/accounts/{account_id}/groups/{group_id}")
+async def assign_group_to_account(account_id: str, group_id: str):
+    svc = _svc_required()
+    try:
+        await svc.assign_group_to_account(account_id, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+@app.delete("/accounts/{account_id}/groups/{group_id}")
+async def remove_group_from_account(account_id: str, group_id: str):
+    svc = _svc_required()
+    try:
+        await svc.remove_group_from_account(account_id, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+"""核心访问控制引擎。
+
+该引擎实现了基于角色的访问控制（RBAC），包括用户账户、角色、权限、
+用户组以及它们之间的映射关系。支持租户隔离，通过 ``tenant_id``
+区分不同租户的权限与角色。所有数据存储于内存中，适用于最小可用
+产品（MVP）阶段。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from ..models import Permission, Role, Group, Account
+
+__all__ = ["AuthEngine"]
+
+
+@dataclass(slots=True)
+class AuthEngine:
+    """内存型访问控制引擎。
+
+    该引擎管理权限、角色、用户组和账户实体，以及它们之间的关系。它
+    提供将权限分配给角色、将角色分配给账户或用户组，以及将用户组
+    分配给账户的方法，并提供权限检查（enforce）方法。
+    """
+
+    _permissions: dict[str, Permission]
+    _roles: dict[str, Role]
+    _groups: dict[str, Group]
+    _accounts: dict[str, Account]
+
+    # ------------------------- 实体管理 -----------------------------------
+    def add_permission(self, permission: Permission) -> None:
+        """注册一个权限。
+
+        :param permission: 权限实例
+        :raises ValueError: 当权限 ID 已存在
+        """
+        if permission.id in self._permissions:
+            raise ValueError(f"permission {permission.id} already exists")
+        self._permissions[permission.id] = permission
+
+    def add_role(self, role: Role) -> None:
+        if role.id in self._roles:
+            raise ValueError(f"role {role.id} already exists")
+        self._roles[role.id] = role
+
+    def add_group(self, group: Group) -> None:
+        if group.id in self._groups:
+            raise ValueError(f"group {group.id} already exists")
+        self._groups[group.id] = group
+
+    def add_account(self, account: Account) -> None:
+        if account.id in self._accounts:
+            raise ValueError(f"account {account.id} already exists")
+        self._accounts[account.id] = account
+
+    # ------------------------- 关系绑定 -----------------------------------
+    def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
+        role = self._roles.get(role_id)
+        perm = self._permissions.get(permission_id)
+        if not role:
+            raise ValueError(f"role {role_id} not found")
+        if not perm:
+            raise ValueError(f"permission {permission_id} not found")
+        role.add_permission(permission_id)
+
+    def assign_role_to_account(self, account_id: str, role_id: str) -> None:
+        account = self._accounts.get(account_id)
+        role = self._roles.get(role_id)
+        if not account:
+            raise ValueError(f"account {account_id} not found")
+        if not role:
+            raise ValueError(f"role {role_id} not found")
+        account.add_role(role_id)
+
+    def assign_role_to_group(self, group_id: str, role_id: str) -> None:
+        group = self._groups.get(group_id)
+        role = self._roles.get(role_id)
+        if not group:
+            raise ValueError(f"group {group_id} not found")
+        if not role:
+            raise ValueError(f"role {role_id} not found")
+        group.add_role(role_id)
+
+    def assign_group_to_account(self, account_id: str, group_id: str) -> None:
+        account = self._accounts.get(account_id)
+        group = self._groups.get(group_id)
+        if not account:
+            raise ValueError(f"account {account_id} not found")
+        if not group:
+            raise ValueError(f"group {group_id} not found")
+        account.add_group(group_id)
+
+    # ------------------------- 权限检查 -----------------------------------
+    def enforce(
+        self,
+        account_id: str,
+        resource: str,
+        action: str,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        """检查账户是否拥有指定资源操作的权限。
+
+        :param account_id: 账户 ID
+        :param resource: 资源名称，如组件或模块
+        :param action: 操作名称
+        :param tenant_id: 租户 ID，用于强制租户隔离
+        :returns: ``True`` 表示允许访问，``False`` 表示拒绝
+        """
+        account = self._accounts.get(account_id)
+        if not account:
+            return False
+
+        # 租户隔离：当提供 tenant_id 时，账户必须属于该租户或账户无租户属性
+        if tenant_id is not None and account.tenant_id is not None and account.tenant_id != tenant_id:
+            return False
+
+        target = f"{resource}:{action}"
+
+        # 1. 检查账户直接分配的角色
+        for role_id in account.roles:
+            role = self._roles.get(role_id)
+            if not role:
+                continue
+            # 租户检查：角色所属租户必须匹配（或角色为全局）
+            if tenant_id is not None and role.tenant_id is not None and role.tenant_id != tenant_id:
+                continue
+            if self._role_has_permission(role, target):
+                return True
+
+        # 2. 检查账户所属用户组继承的角色
+        for group_id in account.groups:
+            group = self._groups.get(group_id)
+            if not group:
+                continue
+            # 租户检查：用户组所属租户必须匹配
+            if tenant_id is not None and group.tenant_id is not None and group.tenant_id != tenant_id:
+                continue
+            for role_id in group.roles:
+                role = self._roles.get(role_id)
+                if not role:
+                    continue
+                if tenant_id is not None and role.tenant_id is not None and role.tenant_id != tenant_id:
+                    continue
+                if self._role_has_permission(role, target):
+                    return True
+
+        return False
+
+    # ------------------------- 私有帮助方法 ---------------------------------
+    def _role_has_permission(self, role: Role, target: str) -> bool:
+        """判断角色是否包含名称为 ``target`` 的权限。"""
+        for perm_id in role.permissions:
+            perm = self._permissions.get(perm_id)
+            if perm and perm.name == target:
+                return True
+        return False
+"""core 子包：授权引擎。
+
+该子包对外暴露 ``AuthEngine``，用于管理权限模型和执行权限校验。
+"""
+
+from __future__ import annotations
+
+from .engine import AuthEngine
+
+__all__: list[str] = ["AuthEngine"]
+# backend/core/casbin_adapter.py
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional
+
+__all__ = ["CasbinEngine"]
+
+@dataclass(slots=True)
+class CasbinEngine:
+    """Casbin 包装。
+    注意：这里假设内部已构建好 enforcer（model+adapter），仅提供调用外观。
+    """
+    _enforcer: "casbin.Enforcer"  # 运行期注入
+    _domain_enabled: bool = True  # 租户隔离作为 domain
+
+    # ---- 授权策略录入 ----
+    def add_permission_for_user(self, role_id: str, tenant_id: Optional[str], resource: str, action: str) -> None:
+        if self._domain_enabled:
+            self._enforcer.add_policy(role_id, tenant_id or "*", resource, action)
+
+    def add_role_for_account(self, account_id: str, tenant_id: Optional[str], role_id: str) -> None:
+        if self._domain_enabled:
+            self._enforcer.add_grouping_policy(account_id, role_id, tenant_id or "*")
+
+    def add_role_for_group(self, group_id: str, tenant_id: Optional[str], role_id: str) -> None:
+        if self._domain_enabled:
+            self._enforcer.add_grouping_policy(group_id, role_id, tenant_id or "*")
+
+    def add_group_for_account(self, account_id: str, tenant_id: Optional[str], group_id: str) -> None:
+        if self._domain_enabled:
+            self._enforcer.add_grouping_policy(account_id, group_id, tenant_id or "*")
+
+    # ---- 回收/解绑 ----
+    def remove_permission_from_user(self, role_id: str, tenant_id: Optional[str], resource: str, action: str) -> None:
+        self._enforcer.remove_policy(role_id, tenant_id or "*", resource, action)
+
+    def remove_role_for_account(self, account_id: str, tenant_id: Optional[str], role_id: str) -> None:
+        self._enforcer.remove_grouping_policy(account_id, role_id, tenant_id or "*")
+
+    def remove_role_for_group(self, group_id: str, tenant_id: Optional[str], role_id: str) -> None:
+        self._enforcer.remove_grouping_policy(group_id, role_id, tenant_id or "*")
+
+    def remove_group_for_account(self, account_id: str, tenant_id: Optional[str], group_id: str) -> None:
+        self._enforcer.remove_grouping_policy(account_id, group_id, tenant_id or "*")
+
+    def remove_filtered_policies_for_subject(self, subject_id: str) -> None:
+        # 删除 subject 相关的所有分组与策略（用于彻底删除账号/组/角色时清理）
+        self._enforcer.remove_filtered_grouping_policy(0, subject_id)
+        self._enforcer.remove_filtered_policy(0, subject_id)
+
+    # ---- 决策 ----
+    def enforce(self, account_id: str, tenant_id: Optional[str], resource: str, action: str) -> bool:
+        if self._domain_enabled:
+            return bool(self._enforcer.enforce(account_id, tenant_id or "*", resource, action))
+        return bool(self._enforcer.enforce(account_id, resource, action))
+"""AuthOne 顶层命名空间。
+
+该模块负责对外重新导出核心的接口和类型，使调用方只需
+``import AuthOne`` 或 ``from AuthOne import AuthService`` 即可。
+
+公开的符号通过 __all__ 控制，其余均视为内部实现细节。
+"""
+
+from __future__ import annotations
+
+from ._version import __version__
+# 从模型子包重新导入公开实体
+from .models import (
+    Permission,
+    Role,
+    Group,
+    Account,
+    Resource,
+    AccessCheckRequest,
+    AccessCheckResponse,
+)
+from .config import Settings
+from .service import AuthService
+
+__all__: list[str] = [
+    "__version__",
+    "Permission",
+    "Role",
+    "Group",
+    "Account",
+    "Resource",
+    "AccessCheckRequest",
+    "AccessCheckResponse",
+    "Settings",
+    "AuthService",
+]
+"""配置模块。
+
+此模块定义了一些配置相关的数据结构和帮助函数，用于管理数据库
+连接、Casbin 模型路径等可配置项。通过外部注入 ``Settings`` 实例，可以
+方便地替换数据库或调整日志级别等运行参数。
+
+示例::
+
+    from AuthOne.config import Settings
+    settings = Settings(db_url="postgresql://user:pass@host:5432/db")
+    print(settings.db_url)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+__all__ = ["Settings"]
+
+
+@dataclass(slots=True)
+class Settings:
+    """应用配置。
+
+    :param db_url: 数据库连接字符串，使用 SQLAlchemy 或 psycopg 标准格式。
+    :param log_level: 日志级别，默认为 ``INFO``。
+    :param casbin_model_path: Casbin 模型配置文件路径，用于初始化 Enforcer。
+    :param casbin_policy_table: Casbin 策略表名称，在数据库中存储策略行。
+    """
+
+    # 默认异步数据库 URL。使用 asyncpg 作为 PostgreSQL 驱动。请根据实际
+    # 环境调整用户名、密码和数据库名。如果需要使用同步驱动，可在启动
+    # 时通过环境变量或其他方式覆盖此字段。
+    db_url_sync: str = "postgresql://postgres:123@199.199.199.8:5432/authone"
+    db_url: str = "postgresql+asyncpg://postgres:123@199.199.199.8:5432/authone"
+    log_level: str = "INFO"
+    casbin_model_path: str = "rbac_model.conf"
+    casbin_policy_table: str = "casbin_rules"
+    # 未来可以添加更多配置项，如 Redis、缓存过期时间等
+
+    def override(self, **kwargs: object) -> "Settings":
+        """复制当前配置并按需覆盖字段。
+
+        该方法返回新的 ``Settings`` 实例，不修改原对象。
+        """
+        data = self.__dict__.copy()
+        data.update(kwargs)
+        return Settings(**data)  # type: ignore[arg-type]
+"""数据库模块。
+
+本模块负责创建 SQLAlchemy 的引擎、会话工厂以及 ORM 模型定义。
+我们定义了与领域模型对应的数据库表结构，包括关联表，并提供
+初始化和获取会话的便捷函数。
+"""
+
+# backend/db.py
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+from sqlalchemy import Table, Column, String, Text, Boolean, Integer, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base, relationship
+from datetime import datetime
+
+__all__ = [
+    "Base", "init_engine", "get_session", "dispose_engine",
+    "init_db",
+    "PermissionModel", "RoleModel", "GroupModel", "AccountModel", "ResourceModel",
+    "AuditLogModel", "CasbinRuleModel",
+]
+
+Base = declarative_base()
+
+role_permissions = Table(
+    "role_permissions", Base.metadata,
+    Column("role_id", UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission_id", UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+)
+group_roles = Table(
+    "group_roles", Base.metadata,
+    Column("group_id", UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+user_roles = Table(
+    "user_roles", Base.metadata,
+    Column("account_id", UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+user_groups = Table(
+    "user_groups", Base.metadata,
+    Column("account_id", UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+)
+
+class PermissionModel(Base):
+    __tablename__ = "permissions"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    name: str = Column(String(255), unique=True, nullable=False)
+    description: str = Column(Text, nullable=True)
+    roles = relationship("RoleModel", secondary=role_permissions, back_populates="permissions")
+
+class RoleModel(Base):
+    __tablename__ = "roles"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    name: str = Column(String(255), nullable=False)
+    description: str = Column(Text, nullable=True)
+    permissions = relationship(PermissionModel, secondary=role_permissions, back_populates="roles")
+    groups = relationship("GroupModel", secondary=group_roles, back_populates="roles")
+    accounts = relationship("AccountModel", secondary=user_roles, back_populates="roles")
+
+class GroupModel(Base):
+    __tablename__ = "groups"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    name: str = Column(String(255), nullable=False)
+    description: str = Column(Text, nullable=True)
+    roles = relationship(RoleModel, secondary=group_roles, back_populates="groups")
+    # --- THIS IS THE FIX ---
+    # It must back-populate the 'groups' property on the AccountModel
+    accounts = relationship("AccountModel", secondary=user_groups, back_populates="groups")
+
+class AccountModel(Base):
+    __tablename__ = "accounts"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    username: str = Column(String(255), nullable=False)
+    email: str = Column(String(255), nullable=False, unique=True)
+    roles = relationship(RoleModel, secondary=user_roles, back_populates="accounts")
+    groups = relationship(GroupModel, secondary=user_groups, back_populates="accounts")
+
+class ResourceModel(Base):
+    __tablename__ = "resources"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    type: str = Column(String(255), nullable=False)
+    name: str = Column(String(255), nullable=False)
+    tenant_id: Optional[str] = Column(String(255), nullable=True, index=True)
+    owner_id: Optional[str] = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
+    resource_metadata: dict = Column(JSON, nullable=True)
+
+class AuditLogModel(Base):
+    __tablename__ = "audit_logs"
+    id: str = Column(UUID(as_uuid=True), primary_key=True)
+    account_id: str = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False)
+    action: str = Column(String(255), nullable=False)
+    resource: str = Column(String(255), nullable=True)
+    result: bool = Column(Boolean, nullable=False)
+    message: str = Column(Text, nullable=True)
+    timestamp: datetime = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class CasbinRuleModel(Base):
+    __tablename__ = "casbin_rules"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ptype = Column(String(255))
+    v0 = Column(String(255))
+    v1 = Column(String(255))
+    v2 = Column(String(255))
+    v3 = Column(String(255))
+    v4 = Column(String(255))
+    v5 = Column(String(255))
+
+
+# ---------- Engine / Session (单例) ----------
+_ENGINE: Optional[AsyncEngine] = None
+_SESSION_FACTORY: Optional[async_sessionmaker[AsyncSession]] = None
+
+def init_engine(db_url: str) -> None:
+    """初始化全局引擎与 session 工厂（幂等）。"""
+    global _ENGINE, _SESSION_FACTORY
+    if _ENGINE is None:
+        _ENGINE = create_async_engine(
+            db_url,
+            future=True,
+            json_serializer=json.dumps,
+            json_deserializer=json.loads,
+        )
+        _SESSION_FACTORY = async_sessionmaker(_ENGINE, expire_on_commit=False)
+
+def get_session() -> AsyncSession:
+    if _SESSION_FACTORY is None:
+        raise RuntimeError("Engine not initialized, call init_engine() first")
+    return _SESSION_FACTORY()
+
+async def dispose_engine() -> None:
+    global _ENGINE
+    if _ENGINE is not None:
+        await _ENGINE.dispose()
+        _ENGINE = None
+
+async def init_db(drop_all: bool = False) -> None:
+    """创建表结构；与当前全局引擎保持一致。"""
+    if _ENGINE is None:
+        raise RuntimeError("Engine not initialized")
+    async with _ENGINE.begin() as conn:
+        if drop_all:
+            await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+"""服务层封装。
+
+``AuthService`` 封装了 ``AuthEngine`` 的实例，提供创建实体、绑定关系和
+权限校验的对外接口。调用方应使用该服务类而非直接操作引擎。
+"""
+
+from __future__ import annotations
+
+from typing import optional
+
+from .models import (
+    Permission,
+    Role,
+    Group,
+    Account,
+    AccessCheckRequest,
+    AccessCheckResponse,
+)
+from .core import AuthEngine
+
+__all__ = ["AuthService"]
+
+
+class AuthService:
+    """权限管理服务类。"""
+
+    def __init__(self) -> None:
+        self._engine = AuthEngine()
+
+    # ------------------------- 创建实体 -------------------------------
+    def create_permission(self, name: str, description: str = "") -> Permission:
+        """创建并注册一个权限。"""
+        perm = Permission.create(name, description)
+        self._engine.add_permission(perm)
+        return perm
+
+    def create_role(self, tenant_id: optional[str], name: str, description: str = "") -> Role:
+        """创建并注册一个角色。"""
+        role = Role.create(tenant_id, name, description)
+        self._engine.add_role(role)
+        return role
+
+    def create_group(self, tenant_id: optional[str], name: str, description: str = "") -> Group:
+        """创建并注册一个用户组。"""
+        group = Group.create(tenant_id, name, description)
+        self._engine.add_group(group)
+        return group
+
+    def create_account(self, username: str, email: str, tenant_id: optional[str] = None) -> Account:
+        """创建并注册一个账户。"""
+        account = Account.create(username, email, tenant_id)
+        self._engine.add_account(account)
+        return account
+
+    # ------------------------- 关系绑定 -------------------------------
+    def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
+        self._engine.assign_permission_to_role(role_id, permission_id)
+
+    def assign_role_to_account(self, account_id: str, role_id: str) -> None:
+        self._engine.assign_role_to_account(account_id, role_id)
+
+    def assign_role_to_group(self, group_id: str, role_id: str) -> None:
+        self._engine.assign_role_to_group(group_id, role_id)
+
+    def assign_group_to_account(self, account_id: str, group_id: str) -> None:
+        self._engine.assign_group_to_account(account_id, group_id)
+
+    # ------------------------- 权限校验 -------------------------------
+    def check_access(self, req: AccessCheckRequest) -> AccessCheckResponse:
+        """根据访问请求判断是否允许。
+
+        :param req: 访问请求模型
+        :returns: 访问结果模型
+        """
+        allowed = self._engine.enforce(
+            account_id=req.account_id,
+            resource=req.resource,
+            action=req.action,
+            tenant_id=req.tenant_id,
+        )
+        return AccessCheckResponse(
+            allowed=allowed,
+            reason=None if allowed else "Access denied",
+        )

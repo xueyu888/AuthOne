@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import list, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -84,7 +84,7 @@ class Role:
     _tenant_id: Optional[str]
     _name: str
     _description: str
-    _permissions: List[str] = field(default_factory=list)
+    _permissions: list[str] = field(default_factory=list)
 
     @classmethod
     def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Role":
@@ -126,7 +126,7 @@ class Role:
         return self._description
 
     @property
-    def permissions(self) -> List[str]:
+    def permissions(self) -> list[str]:
         """角色拥有的权限 ID 列表（只读）。"""
         return list(self._permissions)
 
@@ -150,7 +150,7 @@ class Group:
     _tenant_id: Optional[str]
     _name: str
     _description: str
-    _roles: List[str] = field(default_factory=list)
+    _roles: list[str] = field(default_factory=list)
 
     @classmethod
     def create(cls, tenant_id: Optional[str], name: str, description: str) -> "Group":
@@ -188,7 +188,7 @@ class Group:
         return self._description
 
     @property
-    def roles(self) -> List[str]:
+    def roles(self) -> list[str]:
         return list(self._roles)
 
     def add_role(self, role_id: str) -> None:
@@ -208,8 +208,8 @@ class Account:
     _username: str
     _email: str
     _tenant_id: Optional[str]
-    _roles: List[str] = field(default_factory=list)
-    _groups: List[str] = field(default_factory=list)
+    _roles: list[str] = field(default_factory=list)
+    _groups: list[str] = field(default_factory=list)
 
     @classmethod
     def create(cls, username: str, email: str, tenant_id: Optional[str] = None) -> "Account":
@@ -249,11 +249,11 @@ class Account:
         return self._tenant_id
 
     @property
-    def roles(self) -> List[str]:
+    def roles(self) -> list[str]:
         return list(self._roles)
 
     @property
-    def groups(self) -> List[str]:
+    def groups(self) -> list[str]:
         return list(self._groups)
 
     def add_role(self, role_id: str) -> None:

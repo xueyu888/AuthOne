@@ -8,7 +8,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Optional
 
 from ..models import Permission, Role, Group, Account
 
@@ -24,10 +25,10 @@ class AuthEngine:
     分配给账户的方法，并提供权限检查（enforce）方法。
     """
 
-    _permissions: dict[str, Permission] = field(default_factory=dict)
-    _roles: Dict[str, Role] = field(default_factory=dict)
-    _groups: Dict[str, Group] = field(default_factory=dict)
-    _accounts: Dict[str, Account] = field(default_factory=dict)
+    _permissions: dict[str, Permission]
+    _roles: dict[str, Role]
+    _groups: dict[str, Group]
+    _accounts: dict[str, Account]
 
     # ------------------------- 实体管理 -----------------------------------
     def add_permission(self, permission: Permission) -> None:

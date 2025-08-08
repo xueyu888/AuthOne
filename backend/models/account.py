@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 __all__ = ["Account"]
 
@@ -19,8 +19,8 @@ class Account:
     _username: str
     _email: str
     _tenant_id: Optional[str]
-    _roles: List[str] = field(default_factory=list)
-    _groups: List[str] = field(default_factory=list)
+    _roles: list[str]
+    _groups: list[str]
 
     @classmethod
     def create(cls, username: str, email: str, tenant_id: Optional[str] = None) -> "Account":
@@ -29,10 +29,10 @@ class Account:
         if not email or "@" not in email:
             raise ValueError("invalid email")
         return cls(
-            _id=str(uuid.uuid4()),
-            _username=username,
-            _email=email,
-            _tenant_id=tenant_id,
+            _id = str(uuid.uuid4()),
+            _username = username,
+            _email = email,
+            _tenant_id = tenant_id,
         )
 
     @property
@@ -52,11 +52,11 @@ class Account:
         return self._tenant_id
 
     @property
-    def roles(self) -> List[str]:
+    def roles(self) -> list[str]:
         return list(self._roles)
 
     @property
-    def groups(self) -> List[str]:
+    def groups(self) -> list[str]:
         return list(self._groups)
 
     def add_role(self, role_id: str) -> None:

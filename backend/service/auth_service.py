@@ -1,44 +1,21 @@
-"""业务服务层。"""
-
+# backend/service/auth_service.py
 from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 import asyncio
 
-from ..config import Settings
-from ..core.casbin_adapter import CasbinEngine
-from ..models import (
-    Account,
-    Group,
-    Permission,
-    Resource,
-    Role,
-    AccessCheckRequest,
-    AccessCheckResponse,
-)
 from ..db import get_session
+from ..models import Account, Group, Permission, Resource, Role, AccessCheckRequest, AccessCheckResponse
 from ..storage.sqlalchemy_repository import (
-    SQLAlchemyAccountRepository,
-    SQLAlchemyGroupRepository,
-    SQLAlchemyPermissionRepository,
-    SQLAlchemyResourceRepository,
-    SQLAlchemyRoleRepository,
-    AuditLogRepository,
+    SQLAlchemyAccountRepository, SQLAlchemyGroupRepository, SQLAlchemyPermissionRepository,
+    SQLAlchemyResourceRepository, SQLAlchemyRoleRepository, AuditLogRepository
 )
+from ..core.casbin_adapter import CasbinEngine
 
 __all__ = ["AuthService"]
 
-
 @dataclass(slots=True)
 class AuthService:
-    """权限管理服务。
-
-    使用 ``create`` 类方法创建实例，注入配置。服务内部持有仓库对象、
-    Casbin 引擎和审计日志仓库，对外暴露实体管理和权限校验接口。
-    """
-
-    _settings: Settings
     _perm_repo: SQLAlchemyPermissionRepository
     _role_repo: SQLAlchemyRoleRepository
     _group_repo: SQLAlchemyGroupRepository
@@ -48,32 +25,25 @@ class AuthService:
     _casbin: CasbinEngine
 
     @classmethod
-    async def create(cls, settings: Settings) -> "AuthService":
-        """异步创建 ``AuthService`` 实例并初始化仓库和 Casbin 引擎。
-
-        该方法负责构造所有仓库实例，并确保它们持有同一个异步会话。由于
-        ``AsyncSession`` 需要绑定到事件循环，此方法必须使用 ``await`` 调用。
-        """
-        session = get_session(settings)
-        perm_repo = SQLAlchemyPermissionRepository(session)
-        role_repo = SQLAlchemyRoleRepository(session)
-        group_repo = SQLAlchemyGroupRepository(session)
-        account_repo = SQLAlchemyAccountRepository(session)
-        resource_repo = SQLAlchemyResourceRepository(session)
-        audit_repo = AuditLogRepository(session)
-        casbin_engine = CasbinEngine(settings)
+    async def create(cls, casbin: CasbinEngine) -> "AuthService":
+        session = get_session()
         return cls(
-            _settings=settings,
-            _perm_repo=perm_repo,
-            _role_repo=role_repo,
-            _group_repo=group_repo,
-            _account_repo=account_repo,
-            _resource_repo=resource_repo,
-            _audit_repo=audit_repo,
-            _casbin=casbin_engine,
+            _perm_repo=SQLAlchemyPermissionRepository(session),
+            _role_repo=SQLAlchemyRoleRepository(session),
+            _group_repo=SQLAlchemyGroupRepository(session),
+            _account_repo=SQLAlchemyAccountRepository(session),
+            _resource_repo=SQLAlchemyResourceRepository(session),
+            _audit_repo=AuditLogRepository(session),
+            _casbin=casbin,
         )
 
-    # ------------------- 实体创建 -------------------
+    # ----------------- 工具：租户校验 -----------------
+    @staticmethod
+    def _tenant_compatible(a: Optional[str], b: Optional[str]) -> bool:
+        # None 代表“全局” —— 与任何租户兼容；否则必须完全相等
+        return a is None or b is None or a == b
+
+    # ----------------- 创建 -----------------
     async def create_permission(self, name: str, description: str = "") -> Permission:
         perm = Permission.create(name, description)
         await self._perm_repo.add(perm)
@@ -85,117 +55,148 @@ class AuthService:
         return role
 
     async def create_group(self, tenant_id: Optional[str], name: str, description: str = "") -> Group:
-        group = Group.create(tenant_id, name, description)
-        await self._group_repo.add(group)
-        return group
+        grp = Group.create(tenant_id, name, description)
+        await self._group_repo.add(grp)
+        return grp
 
     async def create_account(self, username: str, email: str, tenant_id: Optional[str] = None) -> Account:
         acc = Account.create(username, email, tenant_id)
         await self._account_repo.add(acc)
         return acc
 
-    async def create_resource(
-        self,
-        resource_type: str,
-        name: str,
-        tenant_id: Optional[str],
-        owner_id: Optional[str],
-        metadata: Optional[dict] = None,
-    ) -> Resource:
-        res = Resource.create(resource_type, name, tenant_id, owner_id, metadata)
+    async def create_resource(self, resource_type: str, name: str, tenant_id: Optional[str], owner_id: Optional[str], metadata: Optional[dict] = None) -> Resource:
+        res = Resource.create(resource_type, name, tenant_id, owner_id, metadata or {})
         await self._resource_repo.add(res)
         return res
 
-    # ------------------- 实体查询 -------------------
-    async def list_permissions(self, tenant_id: Optional[str] = None) -> list[Permission]:
-        return await self._perm_repo.list(tenant_id)
+    # ----------------- 查询 -----------------
+    async def list_permissions(self) -> List[Permission]:
+        return await self._perm_repo.list()
 
-    async def list_roles(self, tenant_id: Optional[str] = None) -> list[Role]:
+    async def list_roles(self, tenant_id: Optional[str] = None) -> List[Role]:
         return await self._role_repo.list(tenant_id)
 
-    async def list_groups(self, tenant_id: Optional[str] = None) -> list[Group]:
+    async def list_groups(self, tenant_id: Optional[str] = None) -> List[Group]:
         return await self._group_repo.list(tenant_id)
 
-    async def list_accounts(self, tenant_id: Optional[str] = None) -> list[Account]:
+    async def list_accounts(self, tenant_id: Optional[str] = None) -> List[Account]:
         return await self._account_repo.list(tenant_id)
 
-    async def list_resources(self, tenant_id: Optional[str] = None) -> list[Resource]:
+    async def list_resources(self, tenant_id: Optional[str] = None) -> List[Resource]:
         return await self._resource_repo.list(tenant_id)
 
-    # ------------------- 关系绑定 -------------------
+    # ----------------- 绑定 -----------------
     async def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
-        # 更新数据库中的关系
-        await self._role_repo.assign_permission(role_id, permission_id)
-        # 读取角色和权限信息
         role = await self._role_repo.get(role_id)
         perm = await self._perm_repo.get(permission_id)
         if not role or not perm:
             raise ValueError("role or permission not found")
-        resource, action = perm.parse()
-        # 将策略写入 Casbin（在后台线程执行同步调用）
-        await asyncio.to_thread(
-            self._casbin.add_permission_for_user,
-            role.id,
-            role.tenant_id,
-            resource,
-            action,
-        )
+        # 角色租户无需与权限一致（权限全局），此处不校验
+        await self._role_repo.assign_permission(role_id, permission_id)
+        res, act = perm.parse()
+        await asyncio.to_thread(self._casbin.add_permission_for_user, role.id, role.tenant_id, res, act)
 
     async def assign_role_to_account(self, account_id: str, role_id: str) -> None:
         acc = await self._account_repo.get(account_id)
         role = await self._role_repo.get(role_id)
         if not acc or not role:
             raise ValueError("account or role not found")
+        if not self._tenant_compatible(acc.tenant_id, role.tenant_id):
+            await self._audit_repo.record(account_id=acc.id, action="assign_role", resource=role.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign role across tenants")
         await self._account_repo.assign_role(account_id, role_id)
-        await asyncio.to_thread(
-            self._casbin.add_role_for_account,
-            acc.id,
-            acc.tenant_id,
-            role.id,
-        )
+        await asyncio.to_thread(self._casbin.add_role_for_account, acc.id, acc.tenant_id, role.id)
 
     async def assign_role_to_group(self, group_id: str, role_id: str) -> None:
-        group = await self._group_repo.get(group_id)
+        grp = await self._group_repo.get(group_id)
         role = await self._role_repo.get(role_id)
-        if not group or not role:
+        if not grp or not role:
             raise ValueError("group or role not found")
+        if not self._tenant_compatible(grp.tenant_id, role.tenant_id):
+            await self._audit_repo.record(account_id="system", action="assign_role_to_group", resource=role.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign role across tenants")
         await self._group_repo.assign_role(group_id, role_id)
-        await asyncio.to_thread(
-            self._casbin.add_role_for_group,
-            group.id,
-            group.tenant_id,
-            role.id,
-        )
+        await asyncio.to_thread(self._casbin.add_role_for_group, grp.id, grp.tenant_id, role.id)
 
     async def assign_group_to_account(self, account_id: str, group_id: str) -> None:
         acc = await self._account_repo.get(account_id)
-        group = await self._group_repo.get(group_id)
-        if not acc or not group:
+        grp = await self._group_repo.get(group_id)
+        if not acc or not grp:
             raise ValueError("account or group not found")
+        if not self._tenant_compatible(acc.tenant_id, grp.tenant_id):
+            await self._audit_repo.record(account_id=acc.id, action="assign_group", resource=grp.id, result=False, message="tenant mismatch")
+            raise ValueError("tenant mismatch: cannot assign group across tenants")
         await self._account_repo.assign_group(account_id, group_id)
-        await asyncio.to_thread(
-            self._casbin.add_group_for_account,
-            acc.id,
-            acc.tenant_id,
-            group.id,
-        )
+        await asyncio.to_thread(self._casbin.add_group_for_account, acc.id, acc.tenant_id, grp.id)
 
-    # ------------------- 权限校验 -------------------
+    # ----------------- 解绑（新增） -----------------
+    async def remove_permission_from_role(self, role_id: str, permission_id: str) -> None:
+        role = await self._role_repo.get(role_id)
+        perm = await self._perm_repo.get(permission_id)
+        if not role or not perm:
+            raise ValueError("role or permission not found")
+        await self._role_repo.remove_permission(role_id, permission_id)
+        res, act = perm.parse()
+        await asyncio.to_thread(self._casbin.remove_permission_from_user, role.id, role.tenant_id, res, act)
+
+    async def remove_role_from_account(self, account_id: str, role_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        role = await self._role_repo.get(role_id)
+        if not acc or not role:
+            raise ValueError("account or role not found")
+        await self._account_repo.remove_role(account_id, role_id)
+        await asyncio.to_thread(self._casbin.remove_role_for_account, acc.id, acc.tenant_id, role.id)
+
+    async def remove_role_from_group(self, group_id: str, role_id: str) -> None:
+        grp = await self._group_repo.get(group_id)
+        role = await self._role_repo.get(role_id)
+        if not grp or not role:
+            raise ValueError("group or role not found")
+        await self._group_repo.remove_role(group_id, role_id)
+        await asyncio.to_thread(self._casbin.remove_role_for_group, grp.id, grp.tenant_id, role.id)
+
+    async def remove_group_from_account(self, account_id: str, group_id: str) -> None:
+        acc = await self._account_repo.get(account_id)
+        grp = await self._group_repo.get(group_id)
+        if not acc or not grp:
+            raise ValueError("account or group not found")
+        await self._account_repo.remove_group(account_id, group_id)
+        await asyncio.to_thread(self._casbin.remove_group_for_account, acc.id, acc.tenant_id, grp.id)
+
+    # ----------------- 删除（新增，含策略清理） -----------------
+    async def delete_permission(self, permission_id: str) -> bool:
+        # 注意：删除权限不会自动从角色里移除对应资源动作的策略，这里仅删除记录
+        return await self._perm_repo.delete(permission_id)
+
+    async def delete_role(self, role_id: str) -> bool:
+        role = await self._role_repo.get(role_id)
+        if not role:
+            return False
+        ok = await self._role_repo.delete(role_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, role.id)
+        return ok
+
+    async def delete_group(self, group_id: str) -> bool:
+        grp = await self._group_repo.get(group_id)
+        if not grp:
+            return False
+        ok = await self._group_repo.delete(group_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, grp.id)
+        return ok
+
+    async def delete_account(self, account_id: str) -> bool:
+        acc = await self._account_repo.get(account_id)
+        if not acc:
+            return False
+        ok = await self._account_repo.delete(account_id)
+        await asyncio.to_thread(self._casbin.remove_filtered_policies_for_subject, acc.id)
+        return ok
+
+    async def delete_resource(self, resource_id: str) -> bool:
+        return await self._resource_repo.delete(resource_id)
+
+    # ----------------- 权限校验（保留审计） -----------------
     async def check_access(self, req: AccessCheckRequest) -> AccessCheckResponse:
-        """检查用户是否对资源拥有访问权限，并记录审计日志。"""
-        allowed = await asyncio.to_thread(
-            self._casbin.enforce,
-            req.account_id,
-            req.tenant_id,
-            req.resource,
-            req.action,
-        )
-        # 记录审计日志
-        await self._audit_repo.record(
-            account_id=req.account_id,
-            action=req.action,
-            resource=req.resource,
-            result=allowed,
-            message="allowed" if allowed else "denied",
-        )
+        allowed = await asyncio.to_thread(self._casbin.enforce, req.account_id, req.tenant_id, req.resource, req.action)
+        await self._audit_repo.record(account_id=req.account_id, action=req.action, resource=req.resource, result=allowed, message="allowed" if allowed else "denied")
         return AccessCheckResponse(allowed=allowed, reason=None if allowed else "Access denied")

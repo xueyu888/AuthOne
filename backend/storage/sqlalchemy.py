@@ -9,7 +9,7 @@ SQLAlchemy ORM 进行数据持久化。由于篇幅限制，这些实现主要�
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import list, Optional
 
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,7 @@ class SQLAlchemyPermissionRepository(_SQLAlchemyBaseRepository, PermissionReposi
         # TODO: 根据 ID 查询 ORM 模型并转换为领域对象
         raise NotImplementedError
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Permission]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Permission]:
         # TODO: 查询所有权限
         raise NotImplementedError
 
@@ -65,7 +65,7 @@ class SQLAlchemyRoleRepository(_SQLAlchemyBaseRepository, RoleRepository):
     def get(self, role_id: str) -> Optional[Role]:
         raise NotImplementedError
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Role]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Role]:
         raise NotImplementedError
 
     def assign_permission(self, role_id: str, permission_id: str) -> None:
@@ -81,7 +81,7 @@ class SQLAlchemyGroupRepository(_SQLAlchemyBaseRepository, GroupRepository):
     def get(self, group_id: str) -> Optional[Group]:
         raise NotImplementedError
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Group]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Group]:
         raise NotImplementedError
 
     def assign_role(self, group_id: str, role_id: str) -> None:
@@ -96,7 +96,7 @@ class SQLAlchemyAccountRepository(_SQLAlchemyBaseRepository, AccountRepository):
     def get(self, account_id: str) -> Optional[Account]:
         raise NotImplementedError
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Account]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Account]:
         raise NotImplementedError
 
     def assign_role(self, account_id: str, role_id: str) -> None:
@@ -114,5 +114,5 @@ class SQLAlchemyResourceRepository(_SQLAlchemyBaseRepository, ResourceRepository
     def get(self, resource_id: str) -> Optional[Resource]:
         raise NotImplementedError
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Resource]:
         raise NotImplementedError

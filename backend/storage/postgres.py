@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 import json
 import psycopg2
-from psycopg2.extras import RealDictCursor
-from typing import List, Optional, Sequence
+from psycopg2.extras import RealdictCursor
+from typing import list, Optional, Sequence
 
 from ..config import Settings
 from ..models import Account, Group, Permission, Resource, Role
@@ -49,7 +49,7 @@ class PostgresDatabase:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealDictCursor)
+        self._conn = psycopg2.connect(self._settings.db_url_sync, cursor_factory=RealdictCursor)
         self._conn.autocommit = True  # 简化示例，不建议在生产中使用 autocommit
 
     def cursor(self):  # type: ignore[no-untyped-def]
@@ -92,7 +92,7 @@ class PostgresPermissionRepository(_BaseRepository, PermissionRepository):
                 return Permission(_id=row["id"], _name=row["name"], _description=row["description"])  # type: ignore[call-arg]
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Permission]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Permission]:
         # 权限表不区分租户，此处忽略 tenant_id
         sql = """
             SELECT id, name, description
@@ -135,7 +135,7 @@ class PostgresRoleRepository(_BaseRepository, RoleRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Role]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Role]:
         sql = """
             SELECT id, tenant_id, name, description
             FROM roles
@@ -147,7 +147,7 @@ class PostgresRoleRepository(_BaseRepository, RoleRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            roles: List[Role] = []
+            roles: list[Role] = []
             for row in rows:
                 role_id = row["id"]
                 perms = self._fetch_role_permissions(role_id)
@@ -171,7 +171,7 @@ class PostgresRoleRepository(_BaseRepository, RoleRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (role_id, permission_id))
 
-    def _fetch_role_permissions(self, role_id: str) -> List[str]:
+    def _fetch_role_permissions(self, role_id: str) -> list[str]:
         sql = """
             SELECT permission_id
             FROM role_permissions
@@ -212,7 +212,7 @@ class PostgresGroupRepository(_BaseRepository, GroupRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Group]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Group]:
         sql = """
             SELECT id, tenant_id, name, description
             FROM groups
@@ -224,7 +224,7 @@ class PostgresGroupRepository(_BaseRepository, GroupRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            groups: List[Group] = []
+            groups: list[Group] = []
             for row in rows:
                 group_id = row["id"]
                 roles = self._fetch_group_roles(group_id)
@@ -248,7 +248,7 @@ class PostgresGroupRepository(_BaseRepository, GroupRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (group_id, role_id))
 
-    def _fetch_group_roles(self, group_id: str) -> List[str]:
+    def _fetch_group_roles(self, group_id: str) -> list[str]:
         sql = """
             SELECT role_id
             FROM group_roles
@@ -291,7 +291,7 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Account]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Account]:
         sql = """
             SELECT id, tenant_id, username, email
             FROM accounts
@@ -303,7 +303,7 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            accounts: List[Account] = []
+            accounts: list[Account] = []
             for row in rows:
                 account_id = row["id"]
                 roles = self._fetch_account_roles(account_id)
@@ -338,7 +338,7 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, (account_id, group_id))
 
-    def _fetch_account_roles(self, account_id: str) -> List[str]:
+    def _fetch_account_roles(self, account_id: str) -> list[str]:
         sql = """
             SELECT role_id
             FROM user_roles
@@ -348,7 +348,7 @@ class PostgresAccountRepository(_BaseRepository, AccountRepository):
             cur.execute(sql, (account_id,))
             return [row["role_id"] for row in cur.fetchall()]
 
-    def _fetch_account_groups(self, account_id: str) -> List[str]:
+    def _fetch_account_groups(self, account_id: str) -> list[str]:
         sql = """
             SELECT group_id
             FROM user_groups
@@ -408,7 +408,7 @@ class PostgresResourceRepository(_BaseRepository, ResourceRepository):
                 )
             return None
 
-    def list(self, tenant_id: Optional[str] = None) -> List[Resource]:
+    def list(self, tenant_id: Optional[str] = None) -> list[Resource]:
         sql = """
             SELECT id, type, name, tenant_id, owner_id, metadata
             FROM resources
@@ -420,7 +420,7 @@ class PostgresResourceRepository(_BaseRepository, ResourceRepository):
         with self._db.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            resources: List[Resource] = []
+            resources: list[Resource] = []
             for row in rows:
                 meta = row["metadata"]
                 if isinstance(meta, str):
