@@ -45,6 +45,27 @@ class DatabaseAdapter(persist.Adapter):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: Engine = create_engine(settings.db_url_sync, future=True)
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        """Create policy table if it does not exist.
+
+        This is primarily useful for test environments where an in-memory
+        SQLite database is used. Production databases are expected to manage
+        migrations separately. The table schema matches the ``CasbinRuleModel``
+        defined in :mod:`backend.db`.
+        """
+        ddl = text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._settings.casbin_policy_table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ptype TEXT,
+                v0 TEXT, v1 TEXT, v2 TEXT, v3 TEXT, v4 TEXT, v5 TEXT
+            )
+            """
+        )
+        with self._engine.begin() as conn:
+            conn.execute(ddl)
 
     def _save_policy_line(self, ptype: str, rule: Sequence[str]) -> None:
         vals: List[Optional[str]] = list(rule) + [None] * (6 - len(rule))
@@ -63,7 +84,7 @@ class DatabaseAdapter(persist.Adapter):
     def load_policy(self, model: casbin.Model) -> None:
         sql = text(f"SELECT ptype, v0, v1, v2, v3, v4, v5 FROM {self._settings.casbin_policy_table}")
         with self._engine.connect() as conn:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql).mappings().all()
             for row in rows:
                 ptype = row["ptype"]
                 rule = [row[f"v{i}"] for i in range(6) if row[f"v{i}"] is not None]
