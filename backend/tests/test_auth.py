@@ -25,11 +25,11 @@ async def auth_service() -> AuthService:
         pytest.skip("Required backend dependencies are missing")
 
     settings = Settings(
-        db_url="sqlite+aiosqlite:///:memory:",
-        db_url_sync="sqlite:///:memory:" 
+        db_url="sqlite+aiosqlite:///./test.db",
+        db_url_sync="sqlite:///./test.db",
     )
     
-    await init_db(settings)
+    await init_db(settings, drop_all=True)
 
     svc = await AuthService.create(settings)
     return svc
@@ -77,7 +77,7 @@ async def test_tenant_isolation(auth_service: AuthService):
 
     req_no_tenant = AccessCheckRequest(account_id=acc.id, resource="app", action="delete")
     resp_no = await svc.check_access(req_no_tenant)
-    assert resp_no.allowed is True
+    assert resp_no.allowed is False
 
 async def test_unauthorized(auth_service: AuthService):
     svc = auth_service
