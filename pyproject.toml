@@ -14,6 +14,7 @@ psycopg2-binary = "^2.9"
 casbin = "^1.18"
 asyncpg = "^0.30.0"
 requests = "^2.32.4"
+sqlalchemy2-stubs = "^0.0.2a38"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.4"

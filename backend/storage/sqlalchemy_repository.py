@@ -46,6 +46,7 @@ class SQLAlchemyPermissionRepository(PermissionRepository):
 
     async def add(self, permission: Permission) -> None:
         async with self.s.begin():
+            table = PermissionModel.__table__
             stmt = (
                 pg_insert(PermissionModel)
                 .values(
@@ -54,15 +55,13 @@ class SQLAlchemyPermissionRepository(PermissionRepository):
                     description = permission.description,
                 )
                 .on_conflict_do_nothing(index_elements=[PermissionModel.name])
-                .returning(PermissionModel.id) #type: ignore[no-any-return]
+                .returning(table.id) 
             )
 
-        rid = await self.s.scalar(stmt) #type: ignore[no-any-return]
+        rid = await self.s.scalar(stmt) 
         if rid is None:
             raise ValueError(f"Permission with name '{permission.name}' already exists.")
         
-        permission._id = str(rid)  # 更新领域对象的 ID
-
     async def get(self, permission_id: str) -> Permission | None:
         m = await self.s.get(PermissionModel, UUID(permission_id))
         return _to_permission(m) if m else None
