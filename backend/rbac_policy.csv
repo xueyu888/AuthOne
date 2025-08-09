@@ -1,8 +1,0 @@
-# p, role,  tenant,   object-pattern,       action-regex
-p, reader,  t1,       /docs/*,              ^(read)$
-p, editor,  t1,       /docs/*,              ^(read|write)$
-p, admin,   t1,       /.*,                  .*
-
-# g, user,   role,   tenant
-g, alice,   reader, t1
-g, bob,     editor, t1

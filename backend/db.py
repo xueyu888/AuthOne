@@ -1,371 +1,137 @@
-"""Database module for AuthOne.
-
-This module defines SQLAlchemy ORM models and provides helper functions
-for creating the asynchronous engine and session factory.  The ORM
-models correspond directly to the domain concepts used by AuthOne
-without any separate dataclass layer.  All tables are declared with
-reasonable constraints (e.g. unique names) and use UUID primary keys.
-
-The ``init_engine`` function must be called once at application
-startup to configure the asynchronous database engine.  ``get_session``
-returns a new ``AsyncSession`` bound to the engine; callers should
-commit or rollback as appropriate.
-
-``init_db`` creates all tables defined on the ``Base`` metadata.
-
-``dispose_engine`` cleanly disposes the engine on shutdown.
-"""
-
 from __future__ import annotations
 
-import json
 import uuid
-from typing import Any
-from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import (
-    Table,
-    Column,
-    String,
-    Text,
-    Boolean,
-    Integer,
-    DateTime,
-    ForeignKey,
-)
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSON as PG_JSON
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON, Index
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-__all__ = [
-    "Base",
-    "init_engine",
-    "get_session",
-    "dispose_engine",
-    "init_db",
-    "PermissionModel",
-    "RoleModel",
-    "GroupModel",
-    "AccountModel",
-    "ResourceModel",
-    "AuditLogModel",
-    "CasbinRuleModel",
-    "role_permissions",
-    "group_roles",
-    "user_roles",
-    "user_groups",
-]
+_engine: Optional[AsyncEngine] = None
+_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
-# ---------------------------------------------------------------------------
-# SQLAlchemy base and association tables
-#
-# We use a declarative base for all ORM models.  Association tables are
-# defined for the many-to-many relationships between roles and permissions,
-# groups and roles, accounts and roles, and accounts and groups.
+class Base(DeclarativeBase):
+    pass
 
-Base = declarative_base()
+# ---------------- Association tables ----------------
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
+    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
 
-# Association table between roles and permissions
-role_permissions = Table(
-    "role_permissions",
-    Base.metadata,
-    Column(
-        "role_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("roles.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "permission_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("permissions.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
+class GroupRole(Base):
+    __tablename__ = "group_roles"
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    __table_args__ = (UniqueConstraint("group_id", "role_id", name="uq_group_role"),)
 
-# Association table between groups and roles
-group_roles = Table(
-    "group_roles",
-    Base.metadata,
-    Column(
-        "group_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("groups.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "role_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("roles.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    __table_args__ = (UniqueConstraint("account_id", "role_id", name="uq_user_role"),)
 
-# Association table between accounts and roles
-user_roles = Table(
-    "user_roles",
-    Base.metadata,
-    Column(
-        "account_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("accounts.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "role_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("roles.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
+class UserGroup(Base):
+    __tablename__ = "user_groups"
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    __table_args__ = (UniqueConstraint("account_id", "group_id", name="uq_user_group"),)
 
-# Association table between accounts and groups
-user_groups = Table(
-    "user_groups",
-    Base.metadata,
-    Column(
-        "account_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("accounts.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "group_id",
-        PG_UUID(as_uuid=True),
-        ForeignKey("groups.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
-# ---------------------------------------------------------------------------
-# ORM models
-#
-# Each model uses a UUID primary key and defines relationships to other
-# models via the association tables above.  We avoid adding any domain
-# specific logic here; validation is performed at the Pydantic layer.  UUID
-# primary keys are generated by the database (via default=uuid.uuid4) to
-# ensure uniqueness.
-
-
+# ---------------- Core entities ----------------
 class PermissionModel(Base):
     __tablename__ = "permissions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
+    roles: Mapped[list["RoleModel"]] = relationship(
+        "RoleModel", secondary="role_permissions", back_populates="permissions", lazy="selectin"
     )
-    name: str = Column(String(255), unique=True, nullable=False)
-    description: str | None = Column(Text, nullable=True)
-    roles = relationship(
-        "RoleModel",
-        secondary=role_permissions,
-        back_populates="permissions",
-    )
-
 
 class RoleModel(Base):
     __tablename__ = "roles"
-
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    tenant_id: str | None = Column(String(255), nullable=True, index=True)
-    name: str = Column(String(255), nullable=False)
-    description: str | None = Column(Text, nullable=True)
-    permissions = relationship(
-        PermissionModel,
-        secondary=role_permissions,
-        back_populates="roles",
-    )
-    groups = relationship(
-        "GroupModel",
-        secondary=group_roles,
-        back_populates="roles",
-    )
-    accounts = relationship(
-        "AccountModel",
-        secondary=user_roles,
-        back_populates="roles",
-    )
-
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_role_tenant_name"),)
+    permissions: Mapped[list[PermissionModel]] = relationship(PermissionModel, secondary="role_permissions", back_populates="roles", lazy="selectin", cascade="save-update" )
 
 class GroupModel(Base):
     __tablename__ = "groups"
-
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    tenant_id: str | None = Column(String(255), nullable=True, index=True)
-    name: str = Column(String(255), nullable=False)
-    description: str | None = Column(Text, nullable=True)
-    roles = relationship(
-        RoleModel,
-        secondary=group_roles,
-        back_populates="groups",
-    )
-    accounts = relationship(
-        "AccountModel",
-        secondary=user_groups,
-        back_populates="groups",
-    )
-
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_group_tenant_name"),)
+    roles: Mapped[list[RoleModel]] = relationship(RoleModel, secondary="group_roles", lazy="selectin")
 
 class AccountModel(Base):
     __tablename__ = "accounts"
-
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    tenant_id: str | None = Column(String(255), nullable=True, index=True)
-    username: str = Column(String(255), nullable=False)
-    email: str = Column(String(255), unique=True, nullable=False)
-    roles = relationship(
-        RoleModel,
-        secondary=user_roles,
-        back_populates="accounts",
-    )
-    groups = relationship(
-        GroupModel,
-        secondary=user_groups,
-        back_populates="accounts",
-    )
-
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    __table_args__ = (UniqueConstraint("tenant_id", "username", name="uq_account_tenant_username"),)
+    roles: Mapped[list[RoleModel]] = relationship(RoleModel, secondary="user_roles", lazy="selectin")
+    groups: Mapped[list[GroupModel]] = relationship(GroupModel, secondary="user_groups", lazy="selectin")
 
 class ResourceModel(Base):
     __tablename__ = "resources"
-
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    type: str = Column(String(255), nullable=False)
-    name: str = Column(String(255), nullable=False)
-    tenant_id: str | None = Column(String(255), nullable=True, index=True)
-    owner_id: Any = Column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("accounts.id"),
-        nullable=True,
-    )
-    resource_metadata: dict[str, Any] | None = Column(PG_JSON, nullable=True)
-
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    resource_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_resource_tenant_name"),)
 
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    resource: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    result: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    message: Mapped[str|None] = mapped_column(Text, nullable=True)
 
-    id: Any = Column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    account_id: Any = Column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("accounts.id"),
-        nullable=False,
-    )
-    action: str = Column(String(255), nullable=False)
-    resource: str | None = Column(String(255), nullable=True)
-    result: bool = Column(Boolean, nullable=False)
-    message: str | None = Column(Text, nullable=True)
-    timestamp: datetime = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-
-class CasbinRuleModel(Base):
-    """Model used by the Casbin built-in SQL adapter.
-
-    If you use a database-backed adapter for Casbin policies (instead of a
-    file), Casbin will store its policies in this table.  The columns v0-v5
-    correspond to the parameters of a policy rule.
-    """
-
+# ---------------- Casbin rule table (persist policies) ----------------
+class CasbinRule(Base):
     __tablename__ = "casbin_rules"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    ptype: Mapped[str] = mapped_column(String(64), index=True)
+    v0: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    v1: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    v2: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    v3: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    v4: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    v5: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
 
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
-    ptype: str | None = Column(String(255))
-    v0: str | None = Column(String(255))
-    v1: str | None = Column(String(255))
-    v2: str | None = Column(String(255))
-    v3: str | None = Column(String(255))
-    v4: str | None = Column(String(255))
-    v5: str | None = Column(String(255))
-
-
-# ---------------------------------------------------------------------------
-# Engine and session management
-_ENGINE: AsyncEngine | None = None
-_SESSION_FACTORY: async_sessionmaker[AsyncSession] | None = None
-
+    __table_args__ = (
+        Index("ix_casbin_rule_all", "ptype", "v0", "v1", "v2", "v3", "v4", "v5", unique=True),
+    )
 
 def init_engine(db_url: str) -> None:
-    """Initialise the asynchronous database engine.
-
-    This function must be called exactly once at startup.  Subsequent calls
-    are no-ops.  The engine is configured with JSON serialisation
-    compatible with PostgreSQL's JSON type.
-
-    :param db_url: SQLAlchemy database URL, e.g. ``postgresql+asyncpg://...``
-    """
-    global _ENGINE, _SESSION_FACTORY
-    if _ENGINE is not None:
-        return
-    _ENGINE = create_async_engine(
-        db_url,
-        future=True,
-        json_serializer=json.dumps,
-        json_deserializer=json.loads,
-    )
-    _SESSION_FACTORY = async_sessionmaker(
-        _ENGINE, expire_on_commit=False
-    )
-
-
-def get_session() -> AsyncSession:
-    """Return a new asynchronous session bound to the global engine.
-
-    Raises ``RuntimeError`` if the engine has not been initialised.  Each
-    session is independent; the caller is responsible for committing or
-    rolling back transactions and closing the session.
-    """
-    if _SESSION_FACTORY is None:
-        raise RuntimeError("Engine not initialised; call init_engine() first")
-    return _SESSION_FACTORY()
-
-
-async def dispose_engine() -> None:
-    """Dispose the global engine and clear session factory.
-
-    After calling this function the engine is unusable.  Useful for
-    graceful shutdown in FastAPI lifespan events.
-    """
-    global _ENGINE, _SESSION_FACTORY
-    if _ENGINE is not None:
-        await _ENGINE.dispose()
-        _ENGINE = None
-    _SESSION_FACTORY = None
-
+    global _engine, _session_factory
+    _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True, future=True)
+    _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 async def init_db(drop_all: bool = False) -> None:
-    """Create all tables defined on the ``Base`` metadata.
-
-    If ``drop_all`` is true, all existing tables are dropped before
-    creation.  This function requires that ``init_engine`` has been
-    invoked.
-    """
-    if _ENGINE is None:
-        raise RuntimeError("Engine not initialised; call init_engine() first")
-    async with _ENGINE.begin() as conn:
+    assert _engine is not None
+    async with _engine.begin() as conn:
         if drop_all:
             await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+
+async def dispose_engine() -> None:
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None
+
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    assert _session_factory is not None
+    return _session_factory

@@ -1,367 +1,379 @@
-"""Service layer for AuthOne.
-
-This module orchestrates operations across repositories and the
-authorisation engine (Casbin).  The service layer performs
-application-level validation (such as cross-tenant checks) and
-translates lower-level exceptions into domain-appropriate ones.  It
-does not directly expose SQLAlchemy sessions or models to calling
-code but instead returns the ORM instances, allowing the API layer to
-serialise them as necessary.
-"""
-
 from __future__ import annotations
 
 import asyncio
-import uuid
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple, Sequence, Dict, Any
+from uuid import UUID
 
+import casbin
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio.session import async_sessionmaker
+
+# Correctly import ORM models from the db module
 from ..db import (
-    PermissionModel,
-    RoleModel,
-    GroupModel,
     AccountModel,
+    GroupModel,
+    RoleModel,
+    PermissionModel,
     ResourceModel,
 )
-from ..models import AccessCheckRequest, AccessCheckResponse
-from ..storage.interface import (
-    PermissionRepository,
-    RoleRepository,
-    GroupRepository,
-    AccountRepository,
-    ResourceRepository,
-)
-from ..storage.sqlalchemy_repository import (
-    SQLAlchemyPermissionRepository,
-    SQLAlchemyRoleRepository,
-    SQLAlchemyGroupRepository,
-    SQLAlchemyAccountRepository,
-    SQLAlchemyResourceRepository,
-    AuditLogRepository,
-)
-from ..db import get_session
-from ..core.casbin_adapter import CasbinEngine
 
-__all__ = ["AuthService"]
+
+# ---- Utilities and Custom Exceptions ----
+
+def _parse_perm(name: str) -> Tuple[str, str]:
+    """Parses a permission string 'resource:action' into a tuple."""
+    if ":" not in name:
+        raise ValueError("Permission name must be in 'resource:action' format")
+    res, action = name.split(":", 1)
+    return res, action
+
+
+class DuplicateError(RuntimeError):
+    """Raised when a unique constraint is violated."""
+    pass
+
+
+class NotFoundError(RuntimeError):
+    """Raised when an entity cannot be found."""
+    pass
 
 
 class AuthService:
-    """Application-level service managing permissions, roles, groups, accounts and resources."""
+    """
+    Service for authorization logic.
+    All database writes are performed asynchronously.
+    Casbin enforcer is synchronized after successful database transactions.
+    """
 
-    def __init__(
-        self,
-        perm_repo: PermissionRepository,
-        role_repo: RoleRepository,
-        group_repo: GroupRepository,
-        account_repo: AccountRepository,
-        resource_repo: ResourceRepository,
-        audit_repo: AuditLogRepository,
-        casbin_engine: CasbinEngine,
-    ) -> None:
-        self._perm_repo = perm_repo
-        self._role_repo = role_repo
-        self._group_repo = group_repo
-        self._account_repo = account_repo
-        self._resource_repo = resource_repo
-        self._audit_repo = audit_repo
-        self._casbin = casbin_engine
+    def __init__(self, sm: async_sessionmaker[AsyncSession], enforcer: casbin.Enforcer) -> None:
+        self._sm = sm
+        self._e = enforcer
 
-    @classmethod
-    async def create(cls, casbin: CasbinEngine) -> "AuthService":
-        """Factory method to create an ``AuthService`` with a new session.
+    # --------------- Permission Management ---------------
 
-        This method obtains a new session via ``get_session`` and
-        constructs concrete repository instances bound to that session.
-        The returned service instance shares a single session across all
-        repository instances; callers should not reuse it across
-        multiple concurrent requests.
-        """
-        session = get_session()
-        return cls(
-            perm_repo=SQLAlchemyPermissionRepository(session),
-            role_repo=SQLAlchemyRoleRepository(session),
-            group_repo=SQLAlchemyGroupRepository(session),
-            account_repo=SQLAlchemyAccountRepository(session),
-            resource_repo=SQLAlchemyResourceRepository(session),
-            audit_repo=AuditLogRepository(session),
-            casbin_engine=casbin,
+    async def create_permission(self, name: str, description: str = "") -> UUID:
+        """Creates a new permission."""
+        _parse_perm(name)  # Validate format
+        async with self._sm() as s:
+            perm = PermissionModel(name=name, description=description or "")
+            s.add(perm)
+            try:
+                await s.commit()
+            except IntegrityError:
+                await s.rollback()
+                raise DuplicateError(f"Permission '{name}' already exists.")
+            await s.refresh(perm)
+            return perm.id
+
+    async def delete_permission(self, perm_id: UUID) -> None:
+        """Deletes a permission. Note: This does not automatically clean up Casbin policies."""
+        async with self._sm() as s:
+            result = await s.execute(delete(PermissionModel).where(PermissionModel.id == perm_id))
+            if result.rowcount == 0:
+                raise NotFoundError(f"Permission with ID '{perm_id}' not found.")
+            await s.commit()
+
+    # --------------- Role Management ---------------
+
+    async def create_role(self, tenant_id: Optional[str], name: str, description: str = "") -> UUID:
+        """Creates a new role within a tenant."""
+        async with self._sm() as s:
+            role = RoleModel(tenant_id=tenant_id, name=name, description=description or "")
+            s.add(role)
+            try:
+                await s.commit()
+            except IntegrityError:
+                await s.rollback()
+                raise DuplicateError(f"Role '{name}' already exists in tenant '{tenant_id}'.")
+            await s.refresh(role)
+            return role.id
+
+    async def delete_role(self, role_id: UUID) -> None:
+        """Deletes a role and cleans up its related Casbin policies."""
+        async with self._sm() as s:
+            role = await s.get(RoleModel, role_id)
+            if not role:
+                raise NotFoundError(f"Role with ID '{role_id}' not found.")
+            await s.delete(role)
+            await s.commit()
+        
+        role_id_str = str(role_id)
+        # In Casbin, a role can be a subject in a 'p' rule or a role in a 'g' rule.
+        # remove_filtered_policy(0, role_id_str) -> p, role, ...
+        # remove_filtered_grouping_policy(1, role_id_str) -> g, user, role, ...
+        await asyncio.gather(
+            asyncio.to_thread(self._e.remove_filtered_policy, 0, role_id_str),
+            asyncio.to_thread(self._e.remove_filtered_grouping_policy, 1, role_id_str),
         )
 
-    # ------------------------------------------------------------------
-    # Internal utilities
-    @staticmethod
-    def _parse_permission_name(name: str) -> Tuple[str, str]:
-        """Split a permission name of the form ``resource:action``.
+    # --------------- Group Management ---------------
 
-        :param name: The permission name string.
-        :returns: A tuple ``(resource, action)``.
-        :raises ValueError: if the string does not contain a colon or any
-            side is empty.
-        """
-        if ":" not in name:
-            raise ValueError(
-                f"permission name must be in format 'resource:action', got {name!r}"
-            )
-        resource, action = name.split(":", 1)
-        if not resource or not action:
-            raise ValueError(f"invalid permission name: {name!r}")
-        return resource, action
+    async def create_group(self, tenant_id: Optional[str], name: str, description: str = "") -> UUID:
+        """Creates a new group within a tenant."""
+        async with self._sm() as s:
+            grp = GroupModel(tenant_id=tenant_id, name=name, description=description or "")
+            s.add(grp)
+            try:
+                await s.commit()
+            except IntegrityError:
+                await s.rollback()
+                raise DuplicateError(f"Group '{name}' already exists in tenant '{tenant_id}'.")
+            await s.refresh(grp)
+            return grp.id
 
-    @staticmethod
-    def _tenant_compatible(a: Optional[str], b: Optional[str]) -> bool:
-        """Return True if two tenant IDs are compatible for association.
+    async def delete_group(self, group_id: UUID) -> None:
+        """Deletes a group and cleans up its related Casbin policies."""
+        async with self._sm() as s:
+            grp = await s.get(GroupModel, group_id)
+            if not grp:
+                raise NotFoundError(f"Group with ID '{group_id}' not found.")
+            await s.delete(grp)
+            await s.commit()
+            
+        group_id_str = str(group_id)
+        # A group can be a subject in 'g' (group->role) and an object/role in 'g2' (user->group).
+        await asyncio.gather(
+            # Removes policies like g, group_id, role_id
+            asyncio.to_thread(self._e.remove_filtered_grouping_policy, 0, group_id_str),
+            # Removes policies like g2, user_id, group_id
+            asyncio.to_thread(self._e.remove_filtered_named_grouping_policy, "g2", 1, group_id_str),
+        )
 
-        Associations across different tenants are allowed but recorded
-        as soft errors in the audit log; the Casbin domain check
-        ultimately enforces isolation.
-        """
-        return a is None or b is None or a == b
+    # --------------- Account Management ---------------
 
-    # ------------------------------------------------------------------
-    # Creation methods
-    async def create_permission(self, name: str, description: str = "") -> PermissionModel:
-        return await self._perm_repo.add(name=name, description=description)
+    async def create_account(self, username: str, email: str, tenant_id: Optional[str]) -> UUID:
+        """Creates a new user account."""
+        async with self._sm() as s:
+            acc = AccountModel(username=username, email=email, tenant_id=tenant_id)
+            s.add(acc)
+            try:
+                await s.commit()
+            except IntegrityError:
+                await s.rollback()
+                raise DuplicateError(f"Account with email '{email}' or username '{username}' already exists.")
+            await s.refresh(acc)
+            return acc.id
 
-    async def create_role(self, tenant_id: str | None, name: str, description: str = "") -> RoleModel:
-        return await self._role_repo.add(tenant_id=tenant_id, name=name, description=description)
+    async def delete_account(self, account_id: UUID) -> None:
+        """Deletes a user account and cleans up its related Casbin policies."""
+        async with self._sm() as s:
+            acc = await s.get(AccountModel, account_id)
+            if not acc:
+                raise NotFoundError(f"Account with ID '{account_id}' not found.")
+            await s.delete(acc)
+            await s.commit()
 
-    async def create_group(self, tenant_id: str | None, name: str, description: str = "") -> GroupModel:
-        return await self._group_repo.add(tenant_id=tenant_id, name=name, description=description)
+        account_id_str = str(account_id)
+        # An account is always the subject (user) in grouping policies.
+        # This will remove the user from all roles ('g') and groups ('g2').
+        await asyncio.to_thread(self._e.remove_filtered_grouping_policy, 0, account_id_str)
 
-    async def create_account(self, username: str, email: str, tenant_id: str | None = None) -> AccountModel:
-        return await self._account_repo.add(username=username, email=email, tenant_id=tenant_id)
+
+    # --------------- Resource Management ---------------
 
     async def create_resource(
         self,
         resource_type: str,
         name: str,
-        tenant_id: str | None,
-        owner_id: str | None,
-        metadata: dict[str, str] | None = None,
-    ) -> ResourceModel:
-        return await self._resource_repo.add(
-            resource_type=resource_type,
-            name=name,
-            tenant_id=tenant_id,
-            owner_id=owner_id,
-            metadata=metadata,
-        )
-
-    # ------------------------------------------------------------------
-    # Listing methods
-    async def list_permissions(self) -> List[PermissionModel]:
-        return await self._perm_repo.list()
-
-    async def list_roles(self, tenant_id: str | None = None) -> List[RoleModel]:
-        return await self._role_repo.list(tenant_id)
-
-    async def list_groups(self, tenant_id: str | None = None) -> List[GroupModel]:
-        return await self._group_repo.list(tenant_id)
-
-    async def list_accounts(self, tenant_id: str | None = None) -> List[AccountModel]:
-        return await self._account_repo.list(tenant_id)
-
-    async def list_resources(self, tenant_id: str | None = None) -> List[ResourceModel]:
-        return await self._resource_repo.list(tenant_id)
-
-    # ------------------------------------------------------------------
-    # Assignment methods
-    async def assign_permission_to_role(self, role_id: str, permission_id: str) -> None:
-        role = await self._role_repo.get(role_id)
-        perm = await self._perm_repo.get(permission_id)
-        if not role or not perm:
-            raise ValueError("role or permission not found")
-        # Persist association
-        await self._role_repo.assign_permission(role.id.hex if isinstance(role.id, uuid.UUID) else str(role.id), perm.id.hex if isinstance(perm.id, uuid.UUID) else str(perm.id))
-        # Update Casbin
-        res, act = self._parse_permission_name(perm.name)
-        await asyncio.to_thread(
-            self._casbin.add_permission_for_user,
-            str(role.id),
-            role.tenant_id,
-            res,
-            act,
-        )
-
-    async def assign_role_to_account(self, account_id: str, role_id: str) -> None:
-        acc = await self._account_repo.get(account_id)
-        role = await self._role_repo.get(role_id)
-        if not acc or not role:
-            raise ValueError("account or role not found")
-        # Soft tenant mismatch detection
-        if not self._tenant_compatible(acc.tenant_id, role.tenant_id):
-            await self._audit_repo.record(
-                account_id=str(acc.id),
-                action="assign_role",
-                resource=str(role.id),
-                result=False,
-                message="tenant mismatch (soft)",
+        tenant_id: Optional[str],
+        owner_id: Optional[UUID],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> UUID:
+        """Creates a new resource."""
+        async with self._sm() as s:
+            res = ResourceModel(
+                type=resource_type, name=name, tenant_id=tenant_id, owner_id=owner_id, resource_metadata=metadata or {}
             )
-        await self._account_repo.assign_role(account_id=str(acc.id), role_id=str(role.id))
-        await asyncio.to_thread(
-            self._casbin.add_role_for_account,
-            str(acc.id),
-            acc.tenant_id,
-            str(role.id),
-        )
+            s.add(res)
+            try:
+                await s.commit()
+            except IntegrityError:
+                await s.rollback()
+                raise DuplicateError(f"Resource '{name}' already exists in tenant '{tenant_id}'.")
+            await s.refresh(res)
+            return res.id
 
-    async def assign_role_to_group(self, group_id: str, role_id: str) -> None:
-        grp = await self._group_repo.get(group_id)
-        role = await self._role_repo.get(role_id)
-        if not grp or not role:
-            raise ValueError("group or role not found")
-        if not self._tenant_compatible(grp.tenant_id, role.tenant_id):
-            await self._audit_repo.record(
-                account_id="system",
-                action="assign_role_to_group",
-                resource=str(role.id),
-                result=False,
-                message="tenant mismatch (soft)",
-            )
-        await self._group_repo.assign_role(group_id=str(grp.id), role_id=str(role.id))
-        await asyncio.to_thread(
-            self._casbin.add_role_for_group,
-            str(grp.id),
-            grp.tenant_id,
-            str(role.id),
-        )
+    async def delete_resource(self, resource_id: UUID) -> None:
+        """Deletes a resource. Casbin policies are not cleaned automatically by design."""
+        async with self._sm() as s:
+            result = await s.execute(delete(ResourceModel).where(ResourceModel.id == resource_id))
+            if result.rowcount == 0:
+                raise NotFoundError(f"Resource with ID '{resource_id}' not found.")
+            await s.commit()
+    
+    # --------------- Relationship Management ---------------
 
-    async def assign_group_to_account(self, account_id: str, group_id: str) -> None:
-        acc = await self._account_repo.get(account_id)
-        grp = await self._group_repo.get(group_id)
-        if not acc or not grp:
-            raise ValueError("account or group not found")
-        if not self._tenant_compatible(acc.tenant_id, grp.tenant_id):
-            await self._audit_repo.record(
-                account_id=str(acc.id),
-                action="assign_group",
-                resource=str(grp.id),
-                result=False,
-                message="tenant mismatch (soft)",
-            )
-        await self._account_repo.assign_group(account_id=str(acc.id), group_id=str(grp.id))
-        await asyncio.to_thread(
-            self._casbin.add_group_for_account,
-            str(acc.id),
-            acc.tenant_id,
-            str(grp.id),
-        )
+    async def assign_permission_to_role(self, role_id: UUID, permission_id: UUID) -> None:
+        """Assigns a permission to a role, updating both the database and Casbin."""
+        async with self._sm() as s:
+            role = await s.get(RoleModel, role_id, options=[selectinload(RoleModel.permissions)])
+            perm = await s.get(PermissionModel, permission_id)
+            if not role or not perm:
+                raise NotFoundError("Role or permission not found.")
 
-    # ------------------------------------------------------------------
-    # Removal methods
-    async def remove_permission_from_role(self, role_id: str, permission_id: str) -> None:
-        role = await self._role_repo.get(role_id)
-        perm = await self._perm_repo.get(permission_id)
-        if not role or not perm:
-            raise ValueError("role or permission not found")
-        await self._role_repo.remove_permission(role_id=str(role.id), permission_id=str(perm.id))
-        res, act = self._parse_permission_name(perm.name)
-        await asyncio.to_thread(
-            self._casbin.remove_permission_from_user,
-            str(role.id),
-            role.tenant_id,
-            res,
-            act,
-        )
+            if perm not in role.permissions:
+                role.permissions.append(perm)
+                await s.commit()
+            
+            resource, action = _parse_perm(perm.name)
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.add_policy, str(role_id), domain, resource, action)
 
-    async def remove_role_from_account(self, account_id: str, role_id: str) -> None:
-        acc = await self._account_repo.get(account_id)
-        role = await self._role_repo.get(role_id)
-        if not acc or not role:
-            raise ValueError("account or role not found")
-        await self._account_repo.remove_role(account_id=str(acc.id), role_id=str(role.id))
-        await asyncio.to_thread(
-            self._casbin.remove_role_for_account,
-            str(acc.id),
-            acc.tenant_id,
-            str(role.id),
-        )
+    async def remove_permission_from_role(self, role_id: UUID, permission_id: UUID) -> None:
+        """Removes a permission from a role."""
+        async with self._sm() as s:
+            role = await s.get(RoleModel, role_id, options=[selectinload(RoleModel.permissions)])
+            perm = await s.get(PermissionModel, permission_id)
+            if not role or not perm:
+                raise NotFoundError("Role or permission not found.")
 
-    async def remove_role_from_group(self, group_id: str, role_id: str) -> None:
-        grp = await self._group_repo.get(group_id)
-        role = await self._role_repo.get(role_id)
-        if not grp or not role:
-            raise ValueError("group or role not found")
-        await self._group_repo.remove_role(group_id=str(grp.id), role_id=str(role.id))
-        await asyncio.to_thread(
-            self._casbin.remove_role_for_group,
-            str(grp.id),
-            grp.tenant_id,
-            str(role.id),
-        )
+            if perm in role.permissions:
+                role.permissions.remove(perm)
+                await s.commit()
 
-    async def remove_group_from_account(self, account_id: str, group_id: str) -> None:
-        acc = await self._account_repo.get(account_id)
-        grp = await self._group_repo.get(group_id)
-        if not acc or not grp:
-            raise ValueError("account or group not found")
-        await self._account_repo.remove_group(account_id=str(acc.id), group_id=str(grp.id))
-        await asyncio.to_thread(
-            self._casbin.remove_group_for_account,
-            str(acc.id),
-            acc.tenant_id,
-            str(grp.id),
-        )
+            resource, action = _parse_perm(perm.name)
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.remove_policy, str(role_id), domain, resource, action)
 
-    # ------------------------------------------------------------------
-    # Deletion methods
-    async def delete_permission(self, permission_id: str) -> bool:
-        return await self._perm_repo.delete(permission_id)
+    async def assign_role_to_account(self, account_id: UUID, role_id: UUID) -> None:
+        """Assigns a role to a user account."""
+        async with self._sm() as s:
+            acc = await s.get(AccountModel, account_id, options=[selectinload(AccountModel.roles)])
+            role = await s.get(RoleModel, role_id)
+            if not acc or not role:
+                raise NotFoundError("Account or role not found.")
 
-    async def delete_role(self, role_id: str) -> bool:
-        role = await self._role_repo.get(role_id)
-        if not role:
-            return False
-        ok = await self._role_repo.delete(role_id)
-        await asyncio.to_thread(
-            self._casbin.remove_filtered_policies_for_subject,
-            str(role.id),
-        )
-        return ok
+            if role not in acc.roles:
+                acc.roles.append(role)
+                await s.commit()
 
-    async def delete_group(self, group_id: str) -> bool:
-        grp = await self._group_repo.get(group_id)
-        if not grp:
-            return False
-        ok = await self._group_repo.delete(group_id)
-        await asyncio.to_thread(
-            self._casbin.remove_filtered_policies_for_subject,
-            str(grp.id),
-        )
-        return ok
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.add_grouping_policy, str(account_id), str(role_id), domain)
 
-    async def delete_account(self, account_id: str) -> bool:
-        acc = await self._account_repo.get(account_id)
-        if not acc:
-            return False
-        ok = await self._account_repo.delete(account_id)
-        await asyncio.to_thread(
-            self._casbin.remove_filtered_policies_for_subject,
-            str(acc.id),
-        )
-        return ok
+    async def remove_role_from_account(self, account_id: UUID, role_id: UUID) -> None:
+        """Removes a role from a user account."""
+        async with self._sm() as s:
+            acc = await s.get(AccountModel, account_id, options=[selectinload(AccountModel.roles)])
+            role = await s.get(RoleModel, role_id)
+            if not acc or not role:
+                raise NotFoundError("Account or role not found.")
 
-    async def delete_resource(self, resource_id: str) -> bool:
-        return await self._resource_repo.delete(resource_id)
+            if role in acc.roles:
+                acc.roles.remove(role)
+                await s.commit()
 
-    # ------------------------------------------------------------------
-    # Access check
-    async def check_access(self, req: AccessCheckRequest) -> AccessCheckResponse:
-        allowed = await asyncio.to_thread(
-            self._casbin.enforce,
-            req.account_id,
-            req.tenant_id,
-            req.resource,
-            req.action,
-        )
-        # Record audit
-        await self._audit_repo.record(
-            account_id=req.account_id,
-            action=req.action,
-            resource=req.resource,
-            result=allowed,
-            message="allowed" if allowed else "denied",
-        )
-        return AccessCheckResponse(
-            allowed=bool(allowed),
-            reason=None if allowed else "Access denied",
-        )
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.remove_grouping_policy, str(account_id), str(role_id), domain)
+
+    async def assign_role_to_group(self, group_id: UUID, role_id: UUID) -> None:
+        """Assigns a role to a group."""
+        async with self._sm() as s:
+            grp = await s.get(GroupModel, group_id, options=[selectinload(GroupModel.roles)])
+            role = await s.get(RoleModel, role_id)
+            if not grp or not role:
+                raise NotFoundError("Group or role not found.")
+
+            if role not in grp.roles:
+                grp.roles.append(role)
+                await s.commit()
+            
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.add_grouping_policy, str(group_id), str(role_id), domain)
+
+    async def remove_role_from_group(self, group_id: UUID, role_id: UUID) -> None:
+        """Removes a role from a group."""
+        async with self._sm() as s:
+            grp = await s.get(GroupModel, group_id, options=[selectinload(GroupModel.roles)])
+            role = await s.get(RoleModel, role_id)
+            if not grp or not role:
+                raise NotFoundError("Group or role not found.")
+            
+            if role in grp.roles:
+                grp.roles.remove(role)
+                await s.commit()
+
+            domain = role.tenant_id or ""
+            await asyncio.to_thread(self._e.remove_grouping_policy, str(group_id), str(role_id), domain)
+            
+    async def assign_group_to_account(self, account_id: UUID, group_id: UUID) -> None:
+        """Assigns a group to a user account, using 'g2' policy."""
+        async with self._sm() as s:
+            acc = await s.get(AccountModel, account_id, options=[selectinload(AccountModel.groups)])
+            grp = await s.get(GroupModel, group_id)
+            if not acc or not grp:
+                raise NotFoundError("Account or group not found.")
+            
+            if grp not in acc.groups:
+                acc.groups.append(grp)
+                await s.commit()
+
+            domain = grp.tenant_id or ""
+            await asyncio.to_thread(self._e.add_named_grouping_policy, "g2", str(account_id), str(group_id), domain)
+
+    async def remove_group_from_account(self, account_id: UUID, group_id: UUID) -> None:
+        """Removes a group from a user account, using 'g2' policy."""
+        async with self._sm() as s:
+            acc = await s.get(AccountModel, account_id, options=[selectinload(AccountModel.groups)])
+            grp = await s.get(GroupModel, group_id)
+            if not acc or not grp:
+                raise NotFoundError("Account or group not found.")
+
+            if grp in acc.groups:
+                acc.groups.remove(grp)
+                await s.commit()
+
+            domain = grp.tenant_id or ""
+            await asyncio.to_thread(self._e.remove_named_grouping_policy, "g2", str(account_id), str(group_id), domain)
+
+    # --------------- Authorization Check ---------------
+
+    async def check_access(
+        self, account_id: UUID, resource: str, action: str, tenant_id: Optional[str] = ""
+    ) -> bool:
+        """Checks if an account has permission to perform an action on a resource."""
+        sub, dom, obj, act = str(account_id), tenant_id or "", resource, action
+        return await asyncio.to_thread(self._e.enforce, sub, dom, obj, act)
+
+    # --------------- Listing Methods ---------------
+
+    async def list_permissions(self) -> Sequence[PermissionModel]:
+        """Lists all permissions."""
+        async with self._sm() as s:
+            q = select(PermissionModel).order_by(PermissionModel.name)
+            return (await s.execute(q)).scalars().all()
+
+    async def list_roles(self, tenant_id: Optional[str] = None) -> Sequence[RoleModel]:
+        """Lists roles, optionally filtered by tenant."""
+        async with self._sm() as s:
+            q = select(RoleModel).order_by(RoleModel.name)
+            if tenant_id is not None:
+                q = q.where(RoleModel.tenant_id == tenant_id)
+            return (await s.execute(q)).scalars().all()
+
+    async def list_groups(self, tenant_id: Optional[str] = None) -> Sequence[GroupModel]:
+        """Lists groups, optionally filtered by tenant."""
+        async with self._sm() as s:
+            q = select(GroupModel).order_by(GroupModel.name)
+            if tenant_id is not None:
+                q = q.where(GroupModel.tenant_id == tenant_id)
+            return (await s.execute(q)).scalars().all()
+
+    async def list_accounts(self, tenant_id: Optional[str] = None) -> Sequence[AccountModel]:
+        """Lists accounts, optionally filtered by tenant."""
+        async with self._sm() as s:
+            q = select(AccountModel).order_by(AccountModel.username)
+            if tenant_id is not None:
+                q = q.where(AccountModel.tenant_id == tenant_id)
+            return (await s.execute(q)).scalars().all()
+
+    async def list_resources(self, tenant_id: Optional[str] = None) -> Sequence[ResourceModel]:
+        """Lists resources, optionally filtered by tenant."""
+        async with self._sm() as s:
+            q = select(ResourceModel).order_by(ResourceModel.type, ResourceModel.name)
+            if tenant_id is not None:
+                q = q.where(ResourceModel.tenant_id == tenant_id)
+            return (await s.execute(q)).scalars().all()
