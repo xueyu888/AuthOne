@@ -4,7 +4,8 @@ import threading
 import asyncio
 from typing import List, Optional
 
-from casbin.persist.adapters import Adapter
+from casbin.persist.adapter import Adapter
+
 from casbin.persist import load_policy_line
 
 from sqlalchemy import select, delete

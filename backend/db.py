@@ -7,6 +7,7 @@ from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import text
 
 _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
@@ -113,9 +114,14 @@ class CasbinRule(Base):
         Index("ix_casbin_rule_all", "ptype", "v0", "v1", "v2", "v3", "v4", "v5", unique=True),
     )
 
-def init_engine(db_url: str) -> None:
+async def init_engine(db_url: str) -> None:
     global _engine, _session_factory
-    _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True, future=True)
+    _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+
+    # 做一次轻量连通性检查，确保驱动/URL无误
+    async with _engine.begin() as conn:
+        await conn.run_sync(lambda c: None)
+
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 async def init_db(drop_all: bool = False) -> None:
@@ -124,6 +130,11 @@ async def init_db(drop_all: bool = False) -> None:
         if drop_all:
             await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+    # 关键：确保 casbin_rules 的唯一索引存在（匹配 ON CONFLICT 的列集合）
+    # await conn.execute(text(
+    #     "CREATE UNIQUE INDEX IF NOT EXISTS ix_casbin_rule_all "
+    #     "ON casbin_rules (ptype, v0, v1, v2, v3, v4, v5)"
+    # ))
 
 async def dispose_engine() -> None:
     global _engine, _session_factory

@@ -14,7 +14,6 @@ psycopg2-binary = "^2.9"
 casbin = "^1.18"
 asyncpg = "^0.30.0"
 requests = "^2.32.4"
-sqlalchemy2-stubs = "^0.0.2a38"
 pydantic-settings = "^2.10.1"
 
 [tool.poetry.dev-dependencies]
@@ -26,7 +25,8 @@ pyinstaller = "^6.4"
 pyinstaller = "^6.14.2"
 pytest-asyncio = "==0.21.*"
 aiosqlite = "^0.21.0"
-sqlalchemy2-stubs = "^0.0.2a38"
+pytest = "^8.4.1"
+httpx = "^0.28.1"
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]

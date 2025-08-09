@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         e = casbin.Enforcer(MODEL_PATH, adapter)
         e.add_function("keyMatch", key_match_func)
         e.add_function("regexMatch", regex_match_func)
-        e.enableAutoSave(True)
+        e.enable_auto_save(True)
         return e
 
     enforcer = await asyncio.to_thread(_build)
