@@ -350,7 +350,7 @@ class AuthService:
         sub, dom, obj, act = str(account_id), tenant_id or "", resource, action
         return await asyncio.to_thread(self._e.enforce, sub, dom, obj, act)
 
-    # --------------- Listing Methods (No changes needed here) ---------------
+    # --------------- Listing Methods ---------------
 
     async def list_permissions(self) -> Sequence[PermissionModel]:
         """Lists all permissions."""
