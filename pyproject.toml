@@ -11,12 +11,11 @@ uvicorn = "^0.27"
 pydantic = {extras = ["email"], version = "^2.11.7"}
 sqlalchemy = "^2.0"
 psycopg2-binary = "^2.9"
-casbin = "^1.18"
 asyncpg = "^0.30.0"
 requests = "^2.32.4"
 pydantic-settings = "^2.10.1"
-casbin-sqlalchemy-adapter = "^1.4.0"
 casbin-async-sqlalchemy-adapter = "^1.8.0"
+casbin = ">=1.43.0"
 
 
 [tool.poetry.group.dev.dependencies]

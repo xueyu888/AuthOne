@@ -1,62 +1,64 @@
 from __future__ import annotations
 
 import os
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, List
 from uuid import UUID
 
-import casbin
+from casbin.async_enforcer import AsyncEnforcer
 from casbin.util import key_match_func, regex_match_func
+from casbin_async_sqlalchemy_adapter import Adapter as AsyncAdapter
 from fastapi import FastAPI, HTTPException, status, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
-# 假设这些是你项目中的模块
-from .db import init_engine, init_db, dispose_engine, get_sessionmaker
+from .db import init_engine, init_db, dispose_engine, get_sessionmaker, _engine
 from .service.auth_service import AuthService, DuplicateError, NotFoundError
-from .core.casbin_pg_adapter import AsyncPGAdapter
-
 
 DB_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:123@127.0.0.1:5432/authone")
 MODEL_PATH = os.getenv("CASBIN_MODEL_PATH", "rbac_model.conf")
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ... (lifespan 函数保持不变) ...
+    # 初始化数据库引擎和会话工厂
     await init_engine(DB_URL)
     await init_db()
     sm = get_sessionmaker()
-    adapter = AsyncPGAdapter(DB_URL)
-    def _build() -> casbin.Enforcer:
-        e = casbin.Enforcer(MODEL_PATH, adapter)
-        e.add_function("keyMatch", key_match_func)
-        e.add_function("regexMatch", regex_match_func)
-        e.enable_auto_save(True)
-        return e
-    enforcer = await asyncio.to_thread(_build)
+
+    # 创建官方异步 Adapter，它直接使用已创建的 _engine
+    adapter = AsyncAdapter(_engine)
+
+    # 创建异步 Enforcer
+    enforcer = AsyncEnforcer(MODEL_PATH, adapter)
+    enforcer.add_function("keyMatch", key_match_func)
+    enforcer.add_function("regexMatch", regex_match_func)
+    
+    # 异步加载策略
+    await enforcer.load_policy()
+
+    # 创建 AuthService 实例
     svc = AuthService(sm, enforcer)
-    app.state.adapter = adapter
+    
+    # 将实例存储在 app.state 中
     app.state.enforcer = enforcer
     app.state.svc = svc
+    
     try:
         yield
     finally:
-        adapter.close()
+        # 清理资源
         await dispose_engine()
-
 
 app = FastAPI(title="AuthOne IAM Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_origins=["*"], # 在生产环境中应改为你的前端域名
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# ---------- Pydantic Models for Request Bodies ----------
+# --- Pydantic 模型定义保持不变 ---
 
 class PermissionCreate(BaseModel):
     name: str = Field(min_length=3)
@@ -90,12 +92,11 @@ class AccessCheck(BaseModel):
     action: str
     tenant_id: Optional[str] = None
 
-# ---------- Pydantic Models for Responses ----------
 class PermissionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     name: str
-    description: str
+    description: Optional[str]
 
 class RoleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -113,6 +114,7 @@ class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     username: str
+    email: EmailStr
     tenant_id: Optional[str] = None
 
 class ResourceResponse(BaseModel):
@@ -121,9 +123,10 @@ class ResourceResponse(BaseModel):
     name: str
     resource_type: str = Field(alias="type")
     tenant_id: Optional[str] = None
+    owner_id: Optional[UUID] = None
 
 class AccessCheckResponse(BaseModel):
-    has_access: bool
+    allowed: bool # 字段名从 has_access 改为 allowed 以匹配前端
 
 
 # ---------- Dependency ----------

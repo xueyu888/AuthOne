@@ -7,13 +7,15 @@ from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import text
 
+# _engine 和 _session_factory 保持模块级变量，以便在 api.py 中被 adapter 使用
 _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 class Base(DeclarativeBase):
     pass
+
+# --- 所有模型定义保持不变 ---
 
 # ---------------- Association tables ----------------
 class RolePermission(Base):
@@ -130,11 +132,6 @@ async def init_db(drop_all: bool = False) -> None:
         if drop_all:
             await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    # 关键：确保 casbin_rules 的唯一索引存在（匹配 ON CONFLICT 的列集合）
-    # await conn.execute(text(
-    #     "CREATE UNIQUE INDEX IF NOT EXISTS ix_casbin_rule_all "
-    #     "ON casbin_rules (ptype, v0, v1, v2, v3, v4, v5)"
-    # ))
 
 async def dispose_engine() -> None:
     global _engine, _session_factory
