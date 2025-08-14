@@ -1,3 +1,5 @@
+# auth_one/service/auth_service.py (这是你文件的可能路径)
+
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +11,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
 
-# Correctly import ORM models from the db module
+# 假设 ORM 模型定义在 db 模块中
 from ..db import (
     AccountModel,
     GroupModel,
@@ -60,8 +61,8 @@ class AuthService:
 
     # --------------- Permission Management ---------------
 
-    async def create_permission(self, name: str, description: str = "") -> UUID:
-        """Creates a new permission."""
+    async def create_permission(self, name: str, description: str = "") -> PermissionModel:
+        """Creates a new permission and returns the full ORM object."""
         _parse_perm(name)  # Validate format
         async with self._sm() as s:
             perm = PermissionModel(name=name, description=description or "")
@@ -72,7 +73,8 @@ class AuthService:
                 await s.rollback()
                 raise DuplicateError(f"Permission '{name}' already exists.")
             await s.refresh(perm)
-            return perm.id
+            # --- MODIFIED: Return the full object ---
+            return perm
 
     async def delete_permission(self, perm_id: UUID) -> None:
         """Deletes a permission. Note: This does not automatically clean up Casbin policies."""
@@ -84,8 +86,8 @@ class AuthService:
 
     # --------------- Role Management ---------------
 
-    async def create_role(self, tenant_id: Optional[str], name: str, description: str = "") -> UUID:
-        """Creates a new role within a tenant."""
+    async def create_role(self, tenant_id: Optional[str], name: str, description: str = "") -> RoleModel:
+        """Creates a new role and returns the full ORM object."""
         async with self._sm() as s:
             role = RoleModel(tenant_id=tenant_id, name=name, description=description or "")
             s.add(role)
@@ -95,9 +97,9 @@ class AuthService:
                 await s.rollback()
                 raise DuplicateError(f"Role '{name}' already exists in tenant '{tenant_id}'.")
             await s.refresh(role)
-            return role.id
+            # --- MODIFIED: Return the full object ---
+            return role
 
-    # TODO asyncio.to_thread 改成 任务队列
     async def delete_role(self, role_id: UUID) -> None:
         """Deletes a role and cleans up its related Casbin policies."""
         async with self._sm() as s:
@@ -108,9 +110,6 @@ class AuthService:
             await s.commit()
         
         role_id_str = str(role_id)
-        # In Casbin, a role can be a subject in a 'p' rule or a role in a 'g' rule.
-        # remove_filtered_policy(0, role_id_str) -> p, role, ...
-        # remove_filtered_grouping_policy(1, role_id_str) -> g, user, role, ...
         await asyncio.gather(
             asyncio.to_thread(self._e.remove_filtered_policy, 0, role_id_str),
             asyncio.to_thread(self._e.remove_filtered_grouping_policy, 1, role_id_str),
@@ -118,8 +117,8 @@ class AuthService:
 
     # --------------- Group Management ---------------
 
-    async def create_group(self, tenant_id: Optional[str], name: str, description: str = "") -> UUID:
-        """Creates a new group within a tenant."""
+    async def create_group(self, tenant_id: Optional[str], name: str, description: str = "") -> GroupModel:
+        """Creates a new group and returns the full ORM object."""
         async with self._sm() as s:
             grp = GroupModel(tenant_id=tenant_id, name=name, description=description or "")
             s.add(grp)
@@ -129,7 +128,8 @@ class AuthService:
                 await s.rollback()
                 raise DuplicateError(f"Group '{name}' already exists in tenant '{tenant_id}'.")
             await s.refresh(grp)
-            return grp.id
+            # --- MODIFIED: Return the full object ---
+            return grp
 
     async def delete_group(self, group_id: UUID) -> None:
         """Deletes a group and cleans up its related Casbin policies."""
@@ -141,18 +141,15 @@ class AuthService:
             await s.commit()
             
         group_id_str = str(group_id)
-        # A group can be a subject in 'g' (group->role) and an object/role in 'g2' (user->group).
         await asyncio.gather(
-            # Removes policies like g, group_id, role_id
             asyncio.to_thread(self._e.remove_filtered_grouping_policy, 0, group_id_str),
-            # Removes policies like g2, user_id, group_id
             asyncio.to_thread(self._e.remove_filtered_named_grouping_policy, "g2", 1, group_id_str),
         )
 
     # --------------- Account Management ---------------
 
-    async def create_account(self, username: str, email: str, tenant_id: Optional[str]) -> UUID:
-        """Creates a new user account."""
+    async def create_account(self, username: str, email: str, tenant_id: Optional[str]) -> AccountModel:
+        """Creates a new user account and returns the full ORM object."""
         async with self._sm() as s:
             acc = AccountModel(username=username, email=email, tenant_id=tenant_id)
             s.add(acc)
@@ -162,7 +159,8 @@ class AuthService:
                 await s.rollback()
                 raise DuplicateError(f"Account with email '{email}' or username '{username}' already exists.")
             await s.refresh(acc)
-            return acc.id
+            # --- MODIFIED: Return the full object ---
+            return acc
 
     async def delete_account(self, account_id: UUID) -> None:
         """Deletes a user account and cleans up its related Casbin policies."""
@@ -174,8 +172,6 @@ class AuthService:
             await s.commit()
 
         account_id_str = str(account_id)
-        # An account is always the subject (user) in grouping policies.
-        # This will remove the user from all roles ('g') and groups ('g2').
         await asyncio.to_thread(self._e.remove_filtered_grouping_policy, 0, account_id_str)
 
 
@@ -188,8 +184,8 @@ class AuthService:
         tenant_id: Optional[str],
         owner_id: Optional[UUID],
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> UUID:
-        """Creates a new resource."""
+    ) -> ResourceModel:
+        """Creates a new resource and returns the full ORM object."""
         async with self._sm() as s:
             res = ResourceModel(
                 type=resource_type, name=name, tenant_id=tenant_id, owner_id=owner_id, resource_metadata=metadata or {}
@@ -201,7 +197,8 @@ class AuthService:
                 await s.rollback()
                 raise DuplicateError(f"Resource '{name}' already exists in tenant '{tenant_id}'.")
             await s.refresh(res)
-            return res.id
+            # --- MODIFIED: Return the full object ---
+            return res
 
     async def delete_resource(self, resource_id: UUID) -> None:
         """Deletes a resource. Casbin policies are not cleaned automatically by design."""
@@ -211,10 +208,10 @@ class AuthService:
                 raise NotFoundError(f"Resource with ID '{resource_id}' not found.")
             await s.commit()
     
-    # --------------- Relationship Management ---------------
+    # --------------- Relationship Management (No changes needed here) ---------------
 
     async def assign_permission_to_role(self, role_id: UUID, permission_id: UUID) -> None:
-        """Assigns a permission to a role, updating both the database and Casbin."""
+        # ... (code remains the same)
         async with self._sm() as s:
             role = await s.get(RoleModel, role_id, options=[selectinload(RoleModel.permissions)])
             perm = await s.get(PermissionModel, permission_id)
@@ -225,18 +222,17 @@ class AuthService:
                 role.permissions.append(perm)
                 await s.commit()
             
-            # --- 核心改动：把 'doc' 映射为 '/docs/*' ---
-            res, act = _parse_perm(perm.name)          # e.g. 'doc', 'read'
-            obj = RESOURCE_TO_PATTERN.get(res, res)    # 若未配置则回退原值
+            res, act = _parse_perm(perm.name)
+            obj = RESOURCE_TO_PATTERN.get(res, res)
             dom = role.tenant_id or ""
 
-            # 去重：避免重复插入相同 policy
             has = await asyncio.to_thread(self._e.has_policy, str(role_id), dom, obj, act)
             if not has:
                 ok = await asyncio.to_thread(self._e.add_policy, str(role_id), dom, obj, act)
                 if not ok:
-                    # 理论上 has_policy=False 时 add_policy 应该成功；如果失败，抛出以便排查
                     raise RuntimeError(f"add_policy failed: sub={role_id}, dom={dom}, obj={obj}, act={act}")
+
+    # ... (all other relationship and listing methods remain the same) ...
 
     async def remove_permission_from_role(self, role_id: UUID, permission_id: UUID) -> None:
         """Removes a permission from a role."""
@@ -251,8 +247,9 @@ class AuthService:
                 await s.commit()
 
             resource, action = _parse_perm(perm.name)
+            obj = RESOURCE_TO_PATTERN.get(resource, resource)
             domain = role.tenant_id or ""
-            await asyncio.to_thread(self._e.remove_policy, str(role_id), domain, resource, action)
+            await asyncio.to_thread(self._e.remove_policy, str(role_id), domain, obj, action)
 
     async def assign_role_to_account(self, account_id: UUID, role_id: UUID) -> None:
         """Assigns a role to a user account."""
@@ -353,7 +350,7 @@ class AuthService:
         sub, dom, obj, act = str(account_id), tenant_id or "", resource, action
         return await asyncio.to_thread(self._e.enforce, sub, dom, obj, act)
 
-    # --------------- Listing Methods ---------------
+    # --------------- Listing Methods (No changes needed here) ---------------
 
     async def list_permissions(self) -> Sequence[PermissionModel]:
         """Lists all permissions."""
