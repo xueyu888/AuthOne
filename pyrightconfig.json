@@ -1,0 +1,8 @@
+{
+  "typeCheckingMode": "strict",
+  "stubPath": "typings",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownVariableType": "warning"
+}
