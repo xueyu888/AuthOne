@@ -64,10 +64,17 @@ async def test_crud_and_rbac_pg_adapter():
 
         r = await ac.post(f"/accounts/{acc_id}/roles/{role_id}")
         assert r.status_code in (200, 201, 204, 409), r.text
-
         # 授权检查
-        r = await ac.post("/check_access", json={"account_id": acc_id, "tenant_id": tenant, "resource": "/docs/1", "action": "read"})
-        assert r.status_code == 200 and r.json()["allowed"] is True, r.text
+        # 第一个测试：期望有权限
+        r = await ac.post("/check-access", json={"account_id": acc_id, "tenant_id": tenant, "resource": "/docs/1", "action": "read"})
 
-        r = await ac.post("/check_access", json={"account_id": acc_id, "tenant_id": tenant, "resource": "/docs/1", "action": "write"})
-        assert r.status_code == 200 and r.json()["allowed"] is False, r.text
+        # 验证状态码，并检查 'has_access' 键的值
+        assert r.status_code == 200
+        assert r.json()["has_access"] is True, f"Expected access to be True, but got: {r.text}"
+
+        # 第二个测试：期望无权限
+        r = await ac.post("/check-access", json={"account_id": acc_id, "tenant_id": tenant, "resource": "/docs/1", "action": "write"})
+
+        # 验证状态码，并检查 'has_access' 键的值
+        assert r.status_code == 200
+        assert r.json()["has_access"] is False, f"Expected access to be False, but got: {r.text}"

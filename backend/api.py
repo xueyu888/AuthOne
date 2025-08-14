@@ -20,41 +20,6 @@ from .core.casbin_pg_adapter import AsyncPGAdapter
 DB_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:123@127.0.0.1:5432/authone")
 MODEL_PATH = os.getenv("CASBIN_MODEL_PATH", "rbac_model.conf")
 
-app = FastAPI(title="AuthOne IAM Service")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产请精确配置
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
-)
-
-class PermissionCreate(BaseModel):
-    name: str = Field(min_length=3)
-    description: str = Field(default="")
-
-class RoleCreate(BaseModel):
-    name: str = Field(min_length=1)
-    tenant_id: Optional[str] = None
-    description: str = Field(default="")
-
-class GroupCreate(BaseModel):
-    name: str
-    tenant_id: Optional[str] = None
-    description: str = Field(default="")
-
-class AccountCreate(BaseModel):
-    username: str
-    email: EmailStr
-    tenant_id: Optional[str] = None
-
-class ResourceCreate(BaseModel):
-    resource_type: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    tenant_id: Optional[str] = None
-    owner_id: Optional[UUID] = None
-    metadata: dict = Field(default_factory=dict)
 
 
 @asynccontextmanager
@@ -86,7 +51,52 @@ async def lifespan(app: FastAPI):
         adapter.close()
         await dispose_engine()
 
-app.router.lifespan_context = lifespan
+
+
+app = FastAPI(title="AuthOne IAM Service", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产请精确配置
+    # allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+class PermissionCreate(BaseModel):
+    name: str = Field(min_length=3)
+    description: str = Field(default="")
+
+class RoleCreate(BaseModel):
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class GroupCreate(BaseModel):
+    name: str
+    tenant_id: Optional[str] = None
+    description: str = Field(default="")
+
+class AccountCreate(BaseModel):
+    username: str
+    email: EmailStr
+    tenant_id: Optional[str] = None
+
+class ResourceCreate(BaseModel):
+    resource_type: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    tenant_id: Optional[str] = None
+    owner_id: Optional[UUID] = None
+    metadata: dict = Field(default_factory=dict)
+
+class AccessCheck(BaseModel):
+    account_id: UUID
+    resource: str
+    action: str
+    tenant_id: Optional[str] = None
+
+
+# ---------- Dependency ----------
 
 
 def _svc() -> AuthService:
@@ -109,7 +119,11 @@ async def list_permissions():
 
 @app.delete("/permissions/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_permission(permission_id: UUID):
-    await _svc().delete_permission(permission_id)
+    try:
+        await _svc().delete_permission(permission_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 
 @app.post("/roles", status_code=status.HTTP_201_CREATED)
 async def create_role(body: RoleCreate):
@@ -126,9 +140,10 @@ async def list_roles(tenant_id: Optional[str] = Query(default=None)):
 
 @app.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(role_id: UUID):
-    ok = await _svc().delete_role(role_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="role not found")
+    try:
+        await _svc().delete_role(role_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/groups", status_code=status.HTTP_201_CREATED)
 async def create_group(body: GroupCreate):
@@ -145,9 +160,11 @@ async def list_groups(tenant_id: Optional[str] = Query(default=None)):
 
 @app.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(group_id: UUID):
-    ok = await _svc().delete_group(group_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="group not found")
+    try:
+        await _svc().delete_group(group_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 
 @app.post("/accounts", status_code=status.HTTP_201_CREATED)
 async def create_account(body: AccountCreate):
@@ -164,10 +181,12 @@ async def list_accounts(tenant_id: Optional[str] = Query(default=None)):
 
 @app.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(account_id: UUID):
-    ok = await _svc().delete_account(account_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="account not found")
+    try:
+        await _svc().delete_account(account_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
+    
 @app.post("/resources", status_code=status.HTTP_201_CREATED)
 async def create_resource(body: ResourceCreate):
     try:
@@ -183,16 +202,16 @@ async def list_resources(tenant_id: Optional[str] = Query(default=None)):
 
 @app.delete("/resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_resource(resource_id: UUID):
-    ok = await _svc().delete_resource(resource_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="resource not found")
+    try: 
+        await _svc().delete_resource(resource_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 # ---------- 关系绑定 ----------
 @app.post("/roles/{role_id}/permissions/{permission_id}")
 async def assign_permission_to_role(role_id: UUID, permission_id: UUID):
     try:
         await _svc().assign_permission_to_role(role_id, permission_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -200,7 +219,6 @@ async def assign_permission_to_role(role_id: UUID, permission_id: UUID):
 async def remove_permission_from_role(role_id: UUID, permission_id: UUID):
     try:
         await _svc().remove_permission_from_role(role_id, permission_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -208,7 +226,6 @@ async def remove_permission_from_role(role_id: UUID, permission_id: UUID):
 async def assign_role_to_account(account_id: UUID, role_id: UUID):
     try:
         await _svc().assign_role_to_account(account_id, role_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -216,7 +233,6 @@ async def assign_role_to_account(account_id: UUID, role_id: UUID):
 async def remove_role_from_account(account_id: UUID, role_id: UUID):
     try:
         await _svc().remove_role_from_account(account_id, role_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -224,7 +240,6 @@ async def remove_role_from_account(account_id: UUID, role_id: UUID):
 async def assign_role_to_group(group_id: UUID, role_id: UUID):
     try:
         await _svc().assign_role_to_group(group_id, role_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -232,7 +247,6 @@ async def assign_role_to_group(group_id: UUID, role_id: UUID):
 async def remove_role_from_group(group_id: UUID, role_id: UUID):
     try:
         await _svc().remove_role_from_group(group_id, role_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -240,7 +254,6 @@ async def remove_role_from_group(group_id: UUID, role_id: UUID):
 async def assign_group_to_account(account_id: UUID, group_id: UUID):
     try:
         await _svc().assign_group_to_account(account_id, group_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -248,6 +261,26 @@ async def assign_group_to_account(account_id: UUID, group_id: UUID):
 async def remove_group_from_account(account_id: UUID, group_id: UUID):
     try:
         await _svc().remove_group_from_account(account_id, group_id)
-        return {"status": "ok"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/check-access", status_code=status.HTTP_200_OK)
+async def check_access(access_check: AccessCheck):
+    try:
+        has_access = await _svc().check_access(
+            access_check.account_id,
+            access_check.resource,
+            access_check.action,
+            access_check.tenant_id,
+        )
+        # 查询语义：一律 200，带布尔
+        return {"has_access": bool(has_access)}
+    except NotFoundError as e:
+        # 真正的不存在类错误，4xx
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        # 不要把已成型的 HTTP 错误改写成 500
+        raise
+    except Exception:
+        # 隐藏内部异常细节
+        raise HTTPException(status_code=500, detail="Internal Server Error")

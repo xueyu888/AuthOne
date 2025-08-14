@@ -22,6 +22,12 @@ from ..db import (
 
 
 # ---- Utilities and Custom Exceptions ----
+# 1) 资源名 → 路径模式 的集中映射（可放到配置/DB）
+RESOURCE_TO_PATTERN = {
+    "doc": "/docs/*",
+    # "proj": "/projects/*",
+    # ...
+}
 
 def _parse_perm(name: str) -> Tuple[str, str]:
     """Parses a permission string 'resource:action' into a tuple."""
@@ -91,6 +97,7 @@ class AuthService:
             await s.refresh(role)
             return role.id
 
+    # TODO asyncio.to_thread 改成 任务队列
     async def delete_role(self, role_id: UUID) -> None:
         """Deletes a role and cleans up its related Casbin policies."""
         async with self._sm() as s:
@@ -218,9 +225,18 @@ class AuthService:
                 role.permissions.append(perm)
                 await s.commit()
             
-            resource, action = _parse_perm(perm.name)
-            domain = role.tenant_id or ""
-            await asyncio.to_thread(self._e.add_policy, str(role_id), domain, resource, action)
+            # --- 核心改动：把 'doc' 映射为 '/docs/*' ---
+            res, act = _parse_perm(perm.name)          # e.g. 'doc', 'read'
+            obj = RESOURCE_TO_PATTERN.get(res, res)    # 若未配置则回退原值
+            dom = role.tenant_id or ""
+
+            # 去重：避免重复插入相同 policy
+            has = await asyncio.to_thread(self._e.has_policy, str(role_id), dom, obj, act)
+            if not has:
+                ok = await asyncio.to_thread(self._e.add_policy, str(role_id), dom, obj, act)
+                if not ok:
+                    # 理论上 has_policy=False 时 add_policy 应该成功；如果失败，抛出以便排查
+                    raise RuntimeError(f"add_policy failed: sub={role_id}, dom={dom}, obj={obj}, act={act}")
 
     async def remove_permission_from_role(self, role_id: UUID, permission_id: UUID) -> None:
         """Removes a permission from a role."""
@@ -331,7 +347,7 @@ class AuthService:
     # --------------- Authorization Check ---------------
 
     async def check_access(
-        self, account_id: UUID, resource: str, action: str, tenant_id: Optional[str] = ""
+        self, account_id: UUID, resource: str, action: str, tenant_id: Optional[str] = None
     ) -> bool:
         """Checks if an account has permission to perform an action on a resource."""
         sub, dom, obj, act = str(account_id), tenant_id or "", resource, action
