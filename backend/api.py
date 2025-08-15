@@ -341,7 +341,6 @@ async def check_access(access_check: AccessCheck, svc: AuthService = Depends(get
             access_check.action,
             access_check.tenant_id,
         )
-        # MODIFIED: Return object matching the response model
         return {"allowed": has_access}
     except NotFoundError as e:
         # This might happen if the account_id doesn't exist, though Casbin would likely just deny access.

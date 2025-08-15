@@ -133,7 +133,7 @@ class AuthService:
         group_id_str = str(group_id)
         # MODIFIED: Direct await on async enforcer methods
         await self._e.remove_filtered_grouping_policy(0, group_id_str)
-        await self._e.remove_filtered_named_grouping_policy("g2", 1, group_id_str)
+        await self._e.remove_filtered_named_grouping_policy("g", 1, group_id_str)
 
     # --------------- Account Management ---------------
 
@@ -313,7 +313,7 @@ class AuthService:
 
             domain = grp.tenant_id or ""
             # MODIFIED: Direct await on async enforcer method
-            await self._e.add_named_grouping_policy("g2", str(account_id), str(group_id), domain)
+            await self._e.add_named_grouping_policy("g", str(account_id), str(group_id), domain)
 
     async def remove_group_from_account(self, account_id: UUID, group_id: UUID) -> None:
         async with self._sm() as s:
@@ -328,7 +328,7 @@ class AuthService:
 
             domain = grp.tenant_id or ""
             # MODIFIED: Direct await on async enforcer method
-            await self._e.remove_named_grouping_policy("g2", str(account_id), str(group_id), domain)
+            await self._e.remove_named_grouping_policy("g", str(account_id), str(group_id), domain)
 
     # --------------- Authorization Check ---------------
 
@@ -337,7 +337,7 @@ class AuthService:
     ) -> bool:
         sub, dom, obj, act = str(account_id), tenant_id or "", resource, action
         # MODIFIED: Direct await on async enforcer method
-        return await self._e.enforce(sub, dom, obj, act)
+        return self._e.enforce(sub, dom, obj, act)
 
     # --------------- Listing Methods ---------------
 
