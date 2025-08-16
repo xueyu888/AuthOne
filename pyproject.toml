@@ -16,6 +16,7 @@ requests = "^2.32.4"
 pydantic-settings = "^2.10.1"
 casbin-async-sqlalchemy-adapter = "^1.8.0"
 casbin = ">=1.43.0"
+watchfiles = "^1.1.0"
 
 
 [tool.poetry.group.dev.dependencies]

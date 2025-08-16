@@ -8,3 +8,4 @@ dist
 build
 .next
 *.db
+.all_code.txt
