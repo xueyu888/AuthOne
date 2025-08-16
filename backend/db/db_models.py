@@ -1,16 +1,15 @@
-# backend/db.py
+#  backend/db/db_models.py
 
 from __future__ import annotations
 
 import uuid
 from typing import Optional
 
-from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON, Index
+from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# _engine 和 _session_factory 保持模块级变量，以便在 api.py 中被 adapter 使用
 _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
@@ -24,7 +23,8 @@ class RolePermission(Base):
     __tablename__ = "role_permissions"
     role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"),
                                                primary_key=True)
-    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"),
+    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                                     ForeignKey("permissions.id", ondelete="CASCADE"),
                                                      primary_key=True)
     __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
 
@@ -62,10 +62,12 @@ class PermissionModel(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
 
     roles: Mapped[list["RoleModel"]] = relationship(
         "RoleModel", secondary="role_permissions", back_populates="permissions", lazy="selectin"
     )
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class RoleModel(Base):
@@ -74,10 +76,13 @@ class RoleModel(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
+
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_role_tenant_name"),)
     permissions: Mapped[list[PermissionModel]] = relationship(PermissionModel, secondary="role_permissions",
                                                               back_populates="roles", lazy="selectin",
                                                               cascade="save-update")
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class GroupModel(Base):
@@ -86,8 +91,11 @@ class GroupModel(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
+
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_group_tenant_name"),)
     roles: Mapped[list[RoleModel]] = relationship(RoleModel, secondary="group_roles", lazy="selectin")
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class AccountModel(Base):
@@ -96,9 +104,12 @@ class AccountModel(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     username: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
+
     __table_args__ = (UniqueConstraint("tenant_id", "username", name="uq_account_tenant_username"),)
     roles: Mapped[list[RoleModel]] = relationship(RoleModel, secondary="user_roles", lazy="selectin")
     groups: Mapped[list[GroupModel]] = relationship(GroupModel, secondary="user_groups", lazy="selectin")
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class ResourceModel(Base):
@@ -109,8 +120,13 @@ class ResourceModel(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True),
                                                           ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    # --- THIS LINE IS CORRECTED ---
     resource_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    # ------------------------------
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
+
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_resource_tenant_name"),)
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class AuditLogModel(Base):
@@ -146,7 +162,6 @@ async def init_engine(db_url: str) -> None:
     global _engine, _session_factory
     _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
 
-    # 做一次轻量连通性检查，确保驱动/URL无误
     async with _engine.begin() as conn:
         await conn.run_sync(lambda c: None)
 
