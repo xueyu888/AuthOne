@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Optional, Any
 
 from sqlalchemy import String, Text, Boolean, ForeignKey, UniqueConstraint, JSON, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
@@ -121,7 +121,7 @@ class ResourceModel(Base):
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True),
                                                           ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     # --- THIS LINE IS CORRECTED ---
-    resource_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    resource_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # ------------------------------
     version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
 
