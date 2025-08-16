@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     # 初始化数据库
     await init_engine(DB_URL)
     # 测试/本地环境干净重建；生产请改为 False 并用迁移
-    await init_db(True)
+    await init_db(False)
 
     # 初始化 Casbin（异步 PG 适配器）
     adapter = AsyncCasbinAdapter(DB_URL)
@@ -51,7 +51,6 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await dispose_engine()
-
 
 app = FastAPI(title="AuthOne IAM Service", lifespan=lifespan)
 
