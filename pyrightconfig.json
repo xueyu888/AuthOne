@@ -1,0 +1,19 @@
+{
+  // 严格度：basic / standard / strict 三选一
+  "typeCheckingMode": "standard",
+
+  // 让 Pylance 找到你的源码和 stubs
+  "stubPath": "./typings",
+  "extraPaths": ["./backend"],
+
+  // venv 解析（可选，但你项目就是 .venv）
+  "venvPath": ".",
+  "venv": ".venv",
+
+  // 噪音开关（可选）
+  "reportMissingTypeStubs": false,
+
+  // 包含/排除（可选）
+  "include": ["backend", "typings"],
+  "exclude": ["**/__pycache__"]
+}

@@ -1,48 +1,44 @@
-"""配置模块。
-
-此模块定义了一些配置相关的数据结构和帮助函数，用于管理数据库
-连接、Casbin 模型路径等可配置项。通过外部注入 ``Settings`` 实例，可以
-方便地替换数据库或调整日志级别等运行参数。
-
-示例::
-
-    from AuthOne.config import Settings
-    settings = Settings(db_url="postgresql://user:pass@host:5432/db")
-    print(settings.db_url)
-"""
-
+# backend/config.py
 from __future__ import annotations
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dataclasses import dataclass
+class CasbinSettings(BaseModel):
+    model_path: str = "rbac_model.conf"
+    enable_auto_save: bool = True
+    register_key_match: bool = True
+    register_regex_match: bool = True
 
-__all__ = ["Settings"]
+class CorsSettings(BaseModel):
+    allow_origins: List[str] = Field(default_factory=lambda: ["*"])
+    allow_methods: List[str] = Field(default_factory=lambda: ["GET", "POST", "DELETE", "PUT", "PATCH"])
+    allow_headers: List[str] = Field(default_factory=lambda: ["Authorization", "Content-Type"])
 
+class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="AUTHONE_", case_sensitive=False)
 
-@dataclass(slots=True)
-class Settings:
-    """应用配置。
+    # 基础
+    app_name: str = "AuthOne IAM Service"
+    environment: str = "dev"  # dev / prod / test
 
-    :param db_url: 数据库连接字符串，使用 SQLAlchemy 或 psycopg 标准格式。
-    :param log_level: 日志级别，默认为 ``INFO``。
-    :param casbin_model_path: Casbin 模型配置文件路径，用于初始化 Enforcer。
-    :param casbin_policy_table: Casbin 策略表名称，在数据库中存储策略行。
-    """
+    # DB
+    db_url: str = "postgresql+asyncpg://postgres:123@127.0.0.1:5432/authone"
+    init_db_drop_all: bool = True  # 生产关掉，走迁移
 
-    # 默认异步数据库 URL。使用 asyncpg 作为 PostgreSQL 驱动。请根据实际
-    # 环境调整用户名、密码和数据库名。如果需要使用同步驱动，可在启动
-    # 时通过环境变量或其他方式覆盖此字段。
-    db_url_sync: str = "postgresql://postgres:123@199.199.199.8:5432/authone"
-    db_url: str = "postgresql+asyncpg://postgres:123@199.199.199.8:5432/authone"
-    log_level: str = "INFO"
-    casbin_model_path: str = "rbac_model.conf"
-    casbin_policy_table: str = "casbin_rules"
-    # 未来可以添加更多配置项，如 Redis、缓存过期时间等
+    # Casbin
+    casbin: CasbinSettings = CasbinSettings()
 
-    def override(self, **kwargs: object) -> "Settings":
-        """复制当前配置并按需覆盖字段。
+    # CORS
+    cors: CorsSettings = CorsSettings()
 
-        该方法返回新的 ``Settings`` 实例，不修改原对象。
-        """
-        data = self.__dict__.copy()
-        data.update(kwargs)
-        return Settings(**data)  # type: ignore[arg-type]
+    # 资源到路径模式（原先写死在 service 里）
+    resource_to_pattern: Dict[str, str] = Field(default_factory=lambda: {
+        "doc": "/docs/*",
+    })
+
+    # 删除幂等化：重复删除返回 204 而非 404
+    delete_idempotent: bool = False
+
+def get_settings() -> AppSettings:
+    return AppSettings()

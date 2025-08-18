@@ -8,21 +8,25 @@ authors = ["xueyu <xueuy@qq.com>"]
 python = ">=3.11,<3.13"
 fastapi = "^0.110"
 uvicorn = "^0.27"
-pydantic = "^1.10"
+pydantic = {extras = ["email"], version = "^2.11.7"}
 sqlalchemy = "^2.0"
 psycopg2-binary = "^2.9"
-casbin = "^1.18"
 asyncpg = "^0.30.0"
+requests = "^2.32.4"
+pydantic-settings = "^2.10.1"
+casbin-async-sqlalchemy-adapter = "^1.8.0"
+casbin = ">=1.43.0"
+watchfiles = "^1.1.0"
 
-[tool.poetry.dev-dependencies]
-pytest = "^7.4"
-mypy = "^1.10"
-pyinstaller = "^6.4"
 
 [tool.poetry.group.dev.dependencies]
 pyinstaller = "^6.14.2"
 pytest-asyncio = "==0.21.*"
 aiosqlite = "^0.21.0"
+pytest = "^8.4.1" # Use the latest version consistently
+httpx = "^0.28.1"
+mypy = "^1.10" # Moved from the deprecated section
+pre-commit = "^4.3.0"
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]
