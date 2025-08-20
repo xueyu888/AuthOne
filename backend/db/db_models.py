@@ -10,9 +10,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-_engine: Optional[AsyncEngine] = None
-_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
-
+__all__ = [
+    "Base",
+    "PermissionModel", "RoleModel", "GroupModel", "AccountModel", "ResourceModel",
+    "AuditLogModel", "RolePermission", "GroupRole", "UserRole", "UserGroup"
+]
 
 class Base(DeclarativeBase):
     pass
@@ -120,9 +122,7 @@ class ResourceModel(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True),
                                                           ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
-    # --- THIS LINE IS CORRECTED ---
     resource_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    # ------------------------------
     version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1')
 
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_resource_tenant_name"),)
@@ -141,32 +141,3 @@ class AuditLogModel(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-async def init_engine(db_url: str) -> None:
-    global _engine, _session_factory
-    _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
-
-    async with _engine.connect() as conn:
-        await conn.execute(select(1))
-
-    _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
-
-
-async def init_db(drop_all: bool = False) -> None:
-    assert _engine is not None
-    async with _engine.begin() as conn:
-        if drop_all:
-            await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-
-
-async def dispose_engine() -> None:
-    global _engine, _session_factory
-    if _engine is not None:
-        await _engine.dispose()
-    _engine = None
-    _session_factory = None
-
-
-def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    assert _session_factory is not None
-    return _session_factory

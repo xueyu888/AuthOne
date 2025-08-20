@@ -16,6 +16,7 @@ from .repository import (
     ResourceRepository,
 )
 
+__all__ = ["UnitOfWork"]
 
 class UnitOfWork:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):

@@ -9,7 +9,7 @@ from casbin.util import key_match_func, regex_match_func
 from casbin_async_sqlalchemy_adapter import Adapter as AsyncCasbinAdapter
 
 from .config import get_settings, AppSettings
-from .db.db_models import init_engine, init_db, dispose_engine, get_sessionmaker
+from .db.database import DatabaseManager
 from .service.auth_service import AuthService
 from .api.__all_routers__ import all_routers
 
@@ -45,8 +45,9 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # DB
-        await init_engine(settings.db_url)
-        await init_db(settings.init_db_drop_all)
+        db_manager = DatabaseManager(settings.db_url)
+        await db_manager.init_engine()
+        await db_manager.create_database_and_tables(settings.init_db_drop_all)
 
         # Casbin
         enforcer = await _build_enforcer(settings)
@@ -62,11 +63,13 @@ def create_app() -> FastAPI:
         app.state.svc = svc
         app.state.enforcer = enforcer
         app.state.settings = settings
+        app.state.db_manager = db_manager
 
         try:
             yield
         finally:
-            await dispose_engine()
+            await db_manager.close_engine()
+
 
     app = FastAPI(title = settings.app_name, lifespan = lifespan)
     _install_cors(app, settings)
