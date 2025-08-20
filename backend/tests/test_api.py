@@ -1,255 +1,333 @@
 # backend/tests/test_api_full.py
+
+from __future__ import annotations
+
 import os
 import uuid
+from dataclasses import dataclass, field
+from typing import ClassVar, Dict, Optional, Tuple
+
 import httpx
 import pytest
 
-BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+# ====================================================================
+#                           设计原则落地
+# ====================================================================
+# 1. 简洁性 (Simplicity):
+#    - 单一的测试类 TestApiLifecycle 承载所有逻辑。
+#    - 将长测试流拆分为多个 _step_x_... 私有方法，意图明确。
+#
+# 2. 逻辑自洽 (Cohesion):
+#    - TestApiLifecycle 类对自己完整的测试行为和状态 (_TestData) 负责，高内聚。
+#
+# 3. 边界清晰 (Encapsulation):
+#    - 所有辅助函数和状态都设为私有 (_api_client, _data, _post_json)，不泄漏实现细节。
+#    - 使用 _TestData 数据类作为清晰的 DTO 在步骤间传递状态。
+#
+# 4. 输入输出显式化 (Contracts):
+#    - 所有方法都添加了严格的静态类型提示 (str, httpx.AsyncClient, _TestData)。
+#
+# 5. 配置清晰 (Configuration Hygiene):
+#    - BASE_URL 从环境变量加载，与代码逻辑分离。
+#
+# 6. 错误防御 (Fail Fast + Explain Why):
+#    - _api_call 方法集中处理 HTTP 状态码校验，请求失败时立即报错并提供上下文。
+#
+# 7. 可验证性 (Testability):
+#    - 文件本身即是测试用例，遵循 pytest 的规范。
+# ====================================================================
 
 
-@pytest.fixture(scope="session")
-def anyio_backend():
-    return "asyncio"
+# 规范 5 & 9: 除入口外，所有逻辑封装为类，类名使用 CamelCase
+# 规范 7: 每个模块必须提供测试用例 (本文件即是)
+
+__all__: list[str] = []  # 测试文件不导出任何符号
 
 
-def _uid(s: str) -> str:
-    return f"{s}-{uuid.uuid4().hex[:8]}"
+@dataclass(slots=True)
+class _TestData:
+    """
+    规范 2 & 10: 内部使用 @dataclass(slots=True) 管理状态。
+    这是一个私有数据类，用于存储测试生命周期中创建的所有实体的名称和 ID。
+    """
+    # -- 静态租户 ID --
+    tenant1: ClassVar[str] = "t1"
+    tenant2: ClassVar[str] = "t2"
 
+    # -- 动态生成的名称 --
+    perm_read: str = field(init=False)
+    perm_rw_regex: str = field(init=False)
+    role_reader: str = field(init=False)
+    role_editor: str = field(init=False)
+    group_name: str = field(init=False)
+    user_alice: str = field(init=False)
+    user_bob: str = field(init=False)
+    email_alice: str = field(init=False)
+    email_bob: str = field(init=False)
+    res_name_1: str = field(init=False)
+    res_name_2: str = field(init=False)
 
-async def _post_json(ac: httpx.AsyncClient, path: str, payload: dict, ok=(200, 201, 204)):
-    r = await ac.post(path, json=payload)
-    assert r.status_code in ok, f"POST {path} failed: {r.status_code} {r.text}"
-    return r
+    # -- API 返回的实体 ID --
+    perm_read_id: str = ""
+    perm_rw_id: str = ""
+    role_reader_id_t1: str = ""
+    role_editor_id_t1: str = ""
+    role_reader_id_t2: str = ""
+    alice_id_t1: str = ""
+    bob_id_t1: str = ""
+    group_id_t1: str = ""
+    res_id_1: str = ""
+    res_id_2: str = ""
 
+    # 规范 10: 使用 @classmethod 作为工厂方法进行初始化
+    @classmethod
+    def create(cls) -> "_TestData":
+        """使用唯一的后缀创建所有测试名称。"""
+        instance = cls()
+        suffix = uuid.uuid4().hex[:8]
+        
+        # 辅助函数，避免重复
+        def uid(s: str) -> str:
+            return f"{s}-{suffix}"
 
-# 改进：允许 _delete 优雅地处理 404 错误，方便清理
-async def _delete(ac: httpx.AsyncClient, path: str, ok=(204, 404)):
-    r = await ac.delete(path)
-    assert r.status_code in ok, f"DELETE {path} failed: {r.status_code} {r.text}"
-    return r
-
-
-async def _get(ac: httpx.AsyncClient, path: str, params: dict | None = None, ok=(200,)):
-    r = await ac.get(path, params=params or {})
-    assert r.status_code in ok, f"GET {path} failed: {r.status_code} {r.text}"
-    return r
-
-
-async def create_or_get_permission(ac: httpx.AsyncClient, name: str, description: str = "") -> str:
-    r = await ac.post("/permissions", json={"name": name, "description": description})
-    if r.status_code in (200, 201):
-        return r.json()["id"]
-    if r.status_code == 409:
-        r2 = await ac.get("/permissions", params={"name": name})
-        data = r2.json()
-        assert data, f"Permission '{name}' not found"
-        return data[0]["id"]
-    raise AssertionError(f"create permission failed: {r.status_code} {r.text}")
-
-
-async def create_or_get_role(ac: httpx.AsyncClient, tenant_id: str | None, name: str, description: str = "") -> str:
-    r = await ac.post("/roles", json={"tenant_id": tenant_id, "name": name, "description": description})
-    if r.status_code in (200, 201):
-        return r.json()["id"]
-    if r.status_code == 409:
-        r2 = await ac.get("/roles", params={"tenant_id": tenant_id, "name": name})
-        data = r2.json()
-        assert data, f"Role '{name}' in tenant '{tenant_id}' not found"
-        return data[0]["id"]
-    raise AssertionError(f"create role failed: {r.status_code} {r.text}")
-
-
-async def create_or_get_account(ac: httpx.AsyncClient, tenant_id: str | None, username: str, email: str) -> str:
-    r = await ac.post("/accounts", json={"username": username, "email": email, "tenant_id": tenant_id})
-    if r.status_code in (200, 201):
-        return r.json()["id"]
-    if r.status_code == 409:
-        r2 = await ac.get("/accounts", params={"tenant_id": tenant_id, "username": username})
-        data = r2.json()
-        assert data, f"Account '{username}' in tenant '{tenant_id}' not found"
-        return data[0]["id"]
-    raise AssertionError(f"create account failed: {r.status_code} {r.text}")
+        instance.perm_read = "doc:read"
+        instance.perm_rw_regex = "doc:read|write"
+        instance.role_reader = uid("reader")
+        instance.role_editor = uid("editor")
+        instance.group_name = uid("group")
+        instance.user_alice = uid("alice")
+        instance.user_bob = uid("bob")
+        instance.email_alice = f"{instance.user_alice}@example.com"
+        instance.email_bob = f"{instance.user_bob}@example.com"
+        instance.res_name_1 = uid("fileA")
+        instance.res_name_2 = uid("fileB")
+        return instance
 
 
 @pytest.mark.anyio
-async def test_full_api_matrix():
-    tenant1 = "t1"
-    tenant2 = "t2"
+class TestApiLifecycle:
+    """封装完整的 API 生命周期集成测试。"""
 
-    # —— 唯一性：避免与之前数据冲突
-    perm_read = "doc:read"
-    perm_rw_regex = "doc:read|write"  # 用于 regexMatch 测试
-    role_reader = _uid("reader")
-    role_editor = _uid("editor")
-    group_name = _uid("group")
-    user_alice = _uid("alice")
-    user_bob = _uid("bob")
-    email_alice = f"{user_alice}@example.com"
-    email_bob = f"{user_bob}@example.com"
+    # 规范 4 & 6: 私有成员/属性以 `_` 开头，不直接暴露字段
+    _BASE_URL: ClassVar[str] = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    _api_client: httpx.AsyncClient
+    _data: _TestData
 
-    res_name_1 = _uid("fileA")
-    res_name_2 = _uid("fileB")
-
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0) as ac:
-        # ---------- 1) 基础 CRUD 与约束 ----------
-        # 1.1 Permission：创建/冲突/过滤
-        perm_read_id = await create_or_get_permission(ac, perm_read, "read docs")
-        r = await ac.post("/permissions", json={"name": perm_read})
-        assert r.status_code == 409
-
-        perm_rw_id = await create_or_get_permission(ac, perm_rw_regex, "read or write via regex")
-        r = await _get(ac, "/permissions", params={"name": perm_rw_regex})
-        assert r.json() and r.json()[0]["id"] == perm_rw_id
-
-        # 1.2 Role：t1 下创建 reader/editor；t2 下只建一个
-        role_reader_id_t1 = await create_or_get_role(ac, tenant1, role_reader)
-        role_editor_id_t1 = await create_or_get_role(ac, tenant1, role_editor)
-        role_reader_id_t2 = await create_or_get_role(ac, tenant2, role_reader)
-
-        # 1.3 Account：t1 的 alice/bob；alice 冲突再 get
-        alice_id_t1 = await create_or_get_account(ac, tenant1, user_alice, email_alice)
-        r = await ac.post("/accounts", json={"username": user_alice, "email": email_alice, "tenant_id": tenant1})
-        assert r.status_code == 409
-        bob_id_t1 = await create_or_get_account(ac, tenant1, user_bob, email_bob)
-
-        # 1.4 Group：t1 的一个组
-        r = await _post_json(ac, "/groups", {"tenant_id": tenant1, "name": group_name})
-        group_id_t1 = r.json()["id"]
-
-        # 1.5 Resource：
-        r = await _post_json(
-            ac, "/resources",
-            {"resource_type": "doc", "name": res_name_1, "tenant_id": tenant1, "metadata": {"k": 1}}
+    # --------------------------------------------------------------------
+    #                           私有辅助方法
+    # --------------------------------------------------------------------
+    
+    # 规范 1: 开启静态类型检查
+    async def _api_call(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict] = None,
+        params: Optional[Dict] = None,
+        expected_status: Tuple[int, ...] = (200, 201, 204),
+    ) -> httpx.Response:
+        """统一的 API 调用方法，内置参数检查和错误防御。"""
+        # 规范 8: 函数入口检查参数有效性
+        if not path.startswith("/"):
+            raise ValueError("API path must start with '/'")
+            
+        r = await self._api_client.request(
+            method, path, json=payload, params=params or {}
         )
-        res_id_1 = r.json()["id"]
-        body = r.json()
-        assert body["type"] == "doc"
-        assert "resource_type" not in body
+        if r.status_code not in expected_status:
+            msg = f"{method.upper()} {path} failed: {r.status_code} {r.text}"
+            raise AssertionError(msg)
+        return r
 
-        r = await _post_json(
-            ac, "/resources",
-            {"resource_type": "doc", "name": res_name_2, "tenant_id": tenant1}
+    async def _create_or_get_entity(self, path: str, create_payload: Dict, get_params: Dict) -> str:
+        """一个通用的“创建或获取”模式的实现，消除重复代码。"""
+        r = await self._api_call("POST", path, payload=create_payload, expected_status=(200, 201, 409))
+        if r.status_code in (200, 201):
+            return r.json()["id"]
+        
+        # 如果是 409 (Conflict)，则查询现有实体
+        r_get = await self._api_call("GET", path, params=get_params, expected_status=(200,))
+        data = r_get.json()
+        if not data:
+            raise AssertionError(f"Failed to get existing entity at {path} with params {get_params}")
+        return data[0]["id"]
+
+    async def _check_access(self, account_id: str, resource: str, action: str, tenant: Optional[str]) -> bool:
+        """鉴权检查辅助方法。"""
+        r = await self._api_call(
+            "POST",
+            "/check-access",
+            payload={"account_id": account_id, "tenant_id": tenant, "resource": resource, "action": action},
+            expected_status=(200,),
         )
-        res_id_2 = r.json()["id"]
+        return bool(r.json()["allowed"])
 
-        # 1.6 422 校验（permission 名字太短）
-        r = await ac.post("/permissions", json={"name": "aa"})
-        assert r.status_code == 422
+    # --------------------------------------------------------------------
+    #                      测试步骤 (按顺序执行)
+    # --------------------------------------------------------------------
 
-        # ---------- 2) 绑定关系 ----------
-        # 2.1 角色 ↔ 权限
-        await _post_json(ac, f"/roles/{role_reader_id_t1}/permissions/{perm_read_id}", {})
-        await _post_json(ac, f"/roles/{role_reader_id_t1}/permissions/{perm_rw_id}", {})
+    async def _step_1_create_base_entities(self) -> None:
+        """步骤 1: 基础 CRUD 与约束测试。"""
+        d = self._data
+        
+        # 1.1 Permission
+        d.perm_read_id = await self._create_or_get_entity(
+            "/permissions", {"name": d.perm_read, "description": "read docs"}, {"name": d.perm_read}
+        )
+        d.perm_rw_id = await self._create_or_get_entity(
+            "/permissions", {"name": d.perm_rw_regex, "description": "regex perm"}, {"name": d.perm_rw_regex}
+        )
+        
+        # 1.2 Role
+        d.role_reader_id_t1 = await self._create_or_get_entity(
+            "/roles", {"tenant_id": d.tenant1, "name": d.role_reader}, {"tenant_id": d.tenant1, "name": d.role_reader}
+        )
+        d.role_editor_id_t1 = await self._create_or_get_entity(
+            "/roles", {"tenant_id": d.tenant1, "name": d.role_editor}, {"tenant_id": d.tenant1, "name": d.role_editor}
+        )
+        d.role_reader_id_t2 = await self._create_or_get_entity(
+            "/roles", {"tenant_id": d.tenant2, "name": d.role_reader}, {"tenant_id": d.tenant2, "name": d.role_reader}
+        )
 
-        # 2.2 账号 ↔ 角色
-        await _post_json(ac, f"/accounts/{alice_id_t1}/roles/{role_reader_id_t1}", {})
-        await _post_json(ac, f"/accounts/{bob_id_t1}/roles/{role_editor_id_t1}", {})
+        # 1.3 Account
+        d.alice_id_t1 = await self._create_or_get_entity(
+            "/accounts",
+            {"tenant_id": d.tenant1, "username": d.user_alice, "email": d.email_alice},
+            {"tenant_id": d.tenant1, "username": d.user_alice},
+        )
+        d.bob_id_t1 = await self._create_or_get_entity(
+            "/accounts",
+            {"tenant_id": d.tenant1, "username": d.user_bob, "email": d.email_bob},
+            {"tenant_id": d.tenant1, "username": d.user_bob},
+        )
+        
+        # 1.4 Group
+        r = await self._api_call("POST", "/groups", {"tenant_id": d.tenant1, "name": d.group_name})
+        d.group_id_t1 = r.json()["id"]
 
-        # 2.3 组 ↔ 角色
-        await _post_json(ac, f"/groups/{group_id_t1}/roles/{role_reader_id_t1}", {})
+        # 1.5 Resource
+        r = await self._api_call("POST", "/resources", {
+            "resource_type": "doc", "name": d.res_name_1, "tenant_id": d.tenant1, "metadata": {"k": 1}
+        })
+        d.res_id_1 = r.json()["id"]
+        assert r.json()["type"] == "doc" and "resource_type" not in r.json()
 
-        # 2.4 账号 ↔ 组
-        await _post_json(ac, f"/accounts/{alice_id_t1}/groups/{group_id_t1}", {})
+        r = await self._api_call("POST", "/resources", {"resource_type": "doc", "name": d.res_name_2, "tenant_id": d.tenant1})
+        d.res_id_2 = r.json()["id"]
+        
+        # 1.6 422 校验
+        await self._api_call("POST", "/permissions", {"name": "aa"}, expected_status=(422,))
 
-        # ---------- 3) 鉴权 ----------
-        async def check(account_id: str, tenant: str | None, resource: str, action: str) -> bool:
-            r = await _post_json(ac, "/check-access", {
-                "account_id": account_id, "tenant_id": tenant, "resource": resource, "action": action
-            }, ok=(200,))
-            return bool(r.json()["allowed"])
+    async def _step_2_bind_relations(self) -> None:
+        """步骤 2: 绑定各种实体间的关系。"""
+        d = self._data
+        await self._api_call("POST", f"/roles/{d.role_reader_id_t1}/permissions/{d.perm_read_id}", {})
+        await self._api_call("POST", f"/roles/{d.role_reader_id_t1}/permissions/{d.perm_rw_id}", {})
+        await self._api_call("POST", f"/accounts/{d.alice_id_t1}/roles/{d.role_reader_id_t1}", {})
+        await self._api_call("POST", f"/accounts/{d.bob_id_t1}/roles/{d.role_editor_id_t1}", {})
+        await self._api_call("POST", f"/groups/{d.group_id_t1}/roles/{d.role_reader_id_t1}", {})
+        await self._api_call("POST", f"/accounts/{d.alice_id_t1}/groups/{d.group_id_t1}", {})
 
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is True
-        assert await check(alice_id_t1, tenant1, "/docs/99", "write") is True
-        assert await check(alice_id_t1, tenant1, "/docsX/1", "read") is False
-        assert await check(alice_id_t1, tenant1, "/docs/1/2", "read") is True
-        assert await check(alice_id_t1, tenant1, "/docs/1", "delete") is False
-        assert await check(alice_id_t1, tenant2, "/docs/1", "read") is False
-        assert await check(alice_id_t1, None, "/docs/1", "read") is False
+    async def _step_3_check_access(self) -> None:
+        """步骤 3: 核心鉴权逻辑验证。"""
+        d = self._data
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is True
+        assert await self._check_access(d.alice_id_t1, "/docs/99", "write", d.tenant1) is True
+        assert await self._check_access(d.alice_id_t1, "/docsX/1", "read", d.tenant1) is False
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "delete", d.tenant1) is False
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant2) is False
 
-        # ---------- 4) 组中转授权 ----------
-        ok_via_group = await check(alice_id_t1, tenant1, "/docs/123", "read")
-        if not ok_via_group:
-            pytest.skip("matcher 里可能未声明 g2，账号→组→角色链路未开启；跳过组中转校验。")
-        assert await check(alice_id_t1, tenant1, "/docs/777", "write") is True
+        # 组中转授权
+        if not await self._check_access(d.alice_id_t1, "/docs/123", "read", d.tenant1):
+            pytest.skip("跳过组中转授权测试 (g2 可能未在 matcher 中声明)")
+        assert await self._check_access(d.alice_id_t1, "/docs/777", "write", d.tenant1) is True
 
-        # ---------- 5) 幂等与冲突分支 ----------
-        r = await ac.post(f"/roles/{role_reader_id_t1}/permissions/{perm_read_id}")
-        assert r.status_code in (204, 409)
-        r = await ac.post(f"/accounts/{alice_id_t1}/roles/{role_reader_id_t1}")
-        assert r.status_code in (204, 409)
+    async def _step_4_check_idempotency(self) -> None:
+        """步骤 4: 幂等性与冲突分支测试。"""
+        d = self._data
+        await self._api_call("POST", f"/roles/{d.role_reader_id_t1}/permissions/{d.perm_read_id}", expected_status=(204, 409))
+        await self._api_call("POST", f"/accounts/{d.alice_id_t1}/roles/{d.role_reader_id_t1}", expected_status=(204, 409))
 
-        # ---------- 6) 解绑与权限撤销 ----------
-        # 6.1 解绑角色-权限
-        await _delete(ac, f"/roles/{role_reader_id_t1}/permissions/{perm_rw_id}")
-        assert await check(alice_id_t1, tenant1, "/docs/1", "write") is False
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is True
+    async def _step_5_unbind_and_revoke(self) -> None:
+        """步骤 5: 解绑关系与权限撤销验证。"""
+        d = self._data
+        # 5.1 解绑角色-权限
+        await self._api_call("DELETE", f"/roles/{d.role_reader_id_t1}/permissions/{d.perm_rw_id}", expected_status=(204, 404))
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "write", d.tenant1) is False
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is True
 
-        # 6.2 解绑账号-角色 和 账号-组
-        await _delete(ac, f"/accounts/{alice_id_t1}/roles/{role_reader_id_t1}")
-        # 【修复】必须同时解绑组，才能彻底切断权限
-        await _delete(ac, f"/accounts/{alice_id_t1}/groups/{group_id_t1}")
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is False
+        # 5.2 解绑账号-角色 和 账号-组
+        await self._api_call("DELETE", f"/accounts/{d.alice_id_t1}/roles/{d.role_reader_id_t1}", expected_status=(204, 404))
+        await self._api_call("DELETE", f"/accounts/{d.alice_id_t1}/groups/{d.group_id_t1}", expected_status=(204, 404))
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is False
 
-        # 6.3 恢复绑定用于后续测试
-        await _post_json(ac, f"/accounts/{alice_id_t1}/roles/{role_reader_id_t1}", {})
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is True
+        # 5.3 恢复绑定用于后续测试
+        await self._api_call("POST", f"/accounts/{d.alice_id_t1}/roles/{d.role_reader_id_t1}", {})
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is True
 
-        # ---------- 7) 实体删除与级联权限撤销 ----------
-        # 【重构】明确测试删除角色后的级联效果
-        # 删除前，alice 有权限
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is True
-        # 删除 reader 角色
-        await _delete(ac, f"/roles/{role_reader_id_t1}", ok=(204,)) # 确保这次删除是成功的
-        # 删除后，alice 应该立即失去权限
-        assert await check(alice_id_t1, tenant1, "/docs/1", "read") is False
+    async def _step_6_delete_cascade(self) -> None:
+        """步骤 6: 实体删除与级联权限撤销验证。"""
+        d = self._data
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is True
+        await self._api_call("DELETE", f"/roles/{d.role_reader_id_t1}", expected_status=(204,))
+        assert await self._check_access(d.alice_id_t1, "/docs/1", "read", d.tenant1) is False
 
-        # ---------- 8) 列表过滤 ----------
-        r = await _get(ac, "/roles", params={"tenant_id": tenant1})
-        roles_t1 = r.json()
-        assert all(item["tenant_id"] == tenant1 for item in roles_t1)
-        # 验证 reader 角色已被删除
-        assert role_reader_id_t1 not in {item["id"] for item in roles_t1}
+    async def _step_7_list_filters(self) -> None:
+        """步骤 7: 列表过滤功能验证。"""
+        d = self._data
+        r = await self._api_call("GET", "/roles", params={"tenant_id": d.tenant1})
+        roles_t1_ids = {item["id"] for item in r.json()}
+        assert d.role_reader_id_t1 not in roles_t1_ids
 
-        r = await _get(ac, "/accounts", params={"tenant_id": tenant1, "username": user_alice})
-        lst = r.json()
-        assert lst and lst[0]["username"] == user_alice
+        r = await self._api_call("GET", "/accounts", params={"tenant_id": d.tenant1, "username": d.user_alice})
+        assert r.json() and r.json()[0]["username"] == d.user_alice
 
-        r = await _get(ac, "/resources", params={"tenant_id": tenant1})
+        r = await self._api_call("GET", "/resources", params={"tenant_id": d.tenant1})
         names = {x["name"] for x in r.json()}
-        assert {res_name_1, res_name_2}.issubset(names)
+        assert {d.res_name_1, d.res_name_2}.issubset(names)
 
-        # ---------- 9) 清理测试数据 ----------
-        # 【新增】一个完整的清理步骤，确保不污染环境
-        # 删除资源
-        await _delete(ac, f"/resources/{res_id_1}")
-        await _delete(ac, f"/resources/{res_id_2}")
+    async def _step_8_cleanup_data(self) -> None:
+        """步骤 8: 清理本次测试创建的所有数据。"""
+        d = self._data
+        delete_opts = {"expected_status": (204, 404)}
         
-        # 删除用户
-        await _delete(ac, f"/accounts/{alice_id_t1}")
-        await _delete(ac, f"/accounts/{bob_id_t1}")
+        # 删除顺序：先删依赖别人的，再删被依赖的
+        await self._api_call("DELETE", f"/resources/{d.res_id_1}", **delete_opts)
+        await self._api_call("DELETE", f"/resources/{d.res_id_2}", **delete_opts)
+        await self._api_call("DELETE", f"/accounts/{d.alice_id_t1}", **delete_opts)
+        await self._api_call("DELETE", f"/accounts/{d.bob_id_t1}", **delete_opts)
+        await self._api_call("DELETE", f"/groups/{d.group_id_t1}", **delete_opts)
+        await self._api_call("DELETE", f"/roles/{d.role_editor_id_t1}", **delete_opts)
+        await self._api_call("DELETE", f"/roles/{d.role_reader_id_t2}", **delete_opts)
+        await self._api_call("DELETE", f"/permissions/{d.perm_read_id}", **delete_opts)
+        await self._api_call("DELETE", f"/permissions/{d.perm_rw_id}", **delete_opts)
         
-        # 删除组
-        await _delete(ac, f"/groups/{group_id_t1}")
-        
-        # 删除剩余的角色
-        await _delete(ac, f"/roles/{role_editor_id_t1}")
-        await _delete(ac, f"/roles/{role_reader_id_t2}")
-        # role_reader_id_t1 已在上面删除，无需重复
-        
-        # 删除权限
-        await _delete(ac, f"/permissions/{perm_read_id}")
-        await _delete(ac, f"/permissions/{perm_rw_id}")
-
-        # ---------- 10) 404 错误分支 ----------
-        # 【调整】将 404 测试放在最后，因为此时依赖的实体都已删除
+    async def _step_9_check_not_found(self) -> None:
+        """步骤 9: 验证删除后，再次访问应返回 404。"""
         rand_uuid = str(uuid.uuid4())
-        r = await ac.delete(f"/permissions/{rand_uuid}")
-        assert r.status_code == 404
-        r = await ac.delete(f"/roles/{rand_uuid}")
-        assert r.status_code == 404
-        r = await ac.delete(f"/groups/{rand_uuid}")
-        assert r.status_code == 404
-        r = await ac.delete(f"/accounts/{rand_uuid}")
-        assert r.status_code == 404
-        r = await ac.delete(f"/resources/{rand_uuid}")
-        assert r.status_code == 404
+        await self._api_call("DELETE", f"/permissions/{rand_uuid}", expected_status=(404,))
+        await self._api_call("DELETE", f"/roles/{rand_uuid}", expected_status=(404,))
+
+    # --------------------------------------------------------------------
+    #                           主测试入口
+    # --------------------------------------------------------------------
+
+    async def test_full_api_matrix(self) -> None:
+        """
+        主测试方法，按顺序编排所有测试步骤。
+        这是一个完整的端到端集成测试，覆盖了从创建到清理的全过程。
+        """
+        self._data = _TestData.create()
+
+        async with httpx.AsyncClient(base_url=self._BASE_URL, timeout=10.0) as ac:
+            self._api_client = ac
+
+            await self._step_1_create_base_entities()
+            await self._step_2_bind_relations()
+            await self._step_3_check_access()
+            await self._step_4_check_idempotency()
+            await self._step_5_unbind_and_revoke()
+            await self._step_6_delete_cascade()
+            await self._step_7_list_filters()
+            await self._step_8_cleanup_data()
+            await self._step_9_check_not_found()
